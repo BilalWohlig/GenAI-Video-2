@@ -68,7 +68,7 @@ class KlingAIService {
 
       const input = {
         prompt: prompt,
-        duration: 5,
+        duration: 10,
         cfg_scale: 0.5,
         start_image: imageUrl,
         aspect_ratio: aspectRatio,

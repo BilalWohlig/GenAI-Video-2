@@ -12,6 +12,15 @@ const { zodTextFormat } = require('openai/helpers/zod');
 const Animation = require('../../mongooseSchema/Animation');
 const KlingAI = require('./klingAIService');
 
+// Add required imports for audio-video sync
+const { execSync, spawnSync } = require("node:child_process");
+const { accessSync, unlinkSync, writeFileSync, readFileSync, constants: fsConstants } = require("node:fs");
+const { access } = require("node:fs/promises");
+
+// Helper function to execute shell commands
+const sh = (cmd) => execSync(cmd, { stdio: ["ignore", "pipe", "inherit"] })
+                    .toString().trim();
+
 // Define Zod schemas for structured responses
 const CharacterSchema = z.object({
   name: z.string(),
@@ -41,7 +50,7 @@ const StoryStructureSchema = z.object({
 });
 
 const MotionDescriptionSchema = z.object({
-  motionDescription: z.string().max(150) // Reduced from 200 for more concise, subtle descriptions
+  motionDescription: z.string().max(150)
 });
 
 class AnimationService {
@@ -66,14 +75,137 @@ class AnimationService {
       await fs.mkdir(path.join(this.workingDir, 'scenes'), { recursive: true });
       await fs.mkdir(path.join(this.workingDir, 'videos'), { recursive: true });
       await fs.mkdir(path.join(this.workingDir, 'audio'), { recursive: true });
+      await fs.mkdir(path.join(this.workingDir, 'processed'), { recursive: true });
     } catch (error) {
       console.error('Error creating directories:', error);
     }
   }
 
+  // Helper function to trim and mux video with audio and subtitles
+  async trimAndMux({ video, audio, subtitleText, out, idx, totalClips, fadeTime = 0.5 }) {
+    try {
+      // 1. Make sure inputs exist
+      await access(video);
+      await access(audio);
+
+      // 2. Get duration of audio file (in seconds, may be fractional)
+      const durOutput = sh(`ffprobe -v error -show_entries format=duration \
+                       -of default=noprint_wrappers=1:nokey=1 "${audio}"`);
+      const dur = parseFloat(durOutput);
+      
+      if (isNaN(dur)) {
+        console.error(`[Debug ${idx+1}] Failed to get duration for ${audio}. ffprobe output: "${durOutput}"`);
+        throw new Error(`Failed to parse duration for ${audio}`);
+      }
+      
+      console.log(`→ Audio duration for scene ${idx+1}: ${dur}s`);
+
+      // 3. Create SRT subtitle file
+      const srtPath = path.join(this.workingDir, `subtitle${idx + 1}.srt`);
+      
+      const formatTime = (totalSeconds) => {
+        if (isNaN(totalSeconds) || totalSeconds < 0) {
+          console.warn(`[Debug ${idx+1}] Invalid totalSeconds for formatTime: ${totalSeconds}. Defaulting to 0.`);
+          totalSeconds = 0;
+        }
+        const date = new Date(Math.round(totalSeconds * 1000));
+        const timeStr = date.toISOString().slice(11, 23); 
+        return timeStr.replace('.', ',');
+      };
+
+      const srtContent = `1\n00:00:00,000 --> ${formatTime(Number(dur) + 0.35)}\n${subtitleText}\n\n`;
+      writeFileSync(srtPath, srtContent, "utf8");
+
+      console.log(`[Debug ${idx+1}] Wrote SRT to: ${srtPath}`);
+      
+      // 4. Verify SRT file was created
+      let srtFileExistsAfterWrite = false;
+      try {
+        accessSync(srtPath, fsConstants.F_OK);
+        srtFileExistsAfterWrite = true;
+      } catch (e) {
+        srtFileExistsAfterWrite = false;
+      }
+      
+      console.log(`[Debug ${idx+1}] SRT Exists? ${srtFileExistsAfterWrite}`);
+      if (!srtFileExistsAfterWrite) {
+        throw new Error(`CRITICAL: SRT file ${srtPath} was NOT found immediately after writing!`);
+      }
+
+      // 5. Prepare SRT path for FFmpeg filter (escape special characters)
+      let srtPathForFilter = srtPath.replace(/\\/g, '/');
+      srtPathForFilter = srtPathForFilter.replace(/:/g, '\\:');
+      srtPathForFilter = srtPathForFilter.replace(/'/g, "'\\''");
+
+      // 6. Calculate fade effects based on clip position
+      let fadeEffects = "";
+      let audioFadeEffects = "";
+      const isFirstClip = idx === 0;
+      const isLastClip = idx === totalClips - 1;
+      
+      if (isFirstClip && isLastClip) {
+        // Single clip - fade in and out
+        fadeEffects = `,fade=t=in:st=0:d=${fadeTime},fade=t=out:st=${dur - fadeTime}:d=${fadeTime}`;
+        audioFadeEffects = `afade=t=in:st=0:d=${fadeTime},afade=t=out:st=${dur - fadeTime}:d=${fadeTime}`;
+      } else if (isFirstClip) {
+        // First clip - only fade in
+        fadeEffects = `,fade=t=in:st=0:d=${fadeTime}`;
+        audioFadeEffects = `afade=t=in:st=0:d=${fadeTime}`;
+      } else if (isLastClip) {
+        // Last clip - only fade out
+        fadeEffects = `,fade=t=out:st=${dur - fadeTime}:d=${fadeTime}`;
+        audioFadeEffects = `afade=t=out:st=${dur - fadeTime}:d=${fadeTime}`;
+      }
+      
+      // 7. Build FFmpeg command arguments
+      const ffArgs = [
+        "-ss", "0", "-t", (Number(dur) + 0.3).toString(), "-i", video,
+        "-i", audio,
+        "-map", "0:v", "-map", "1:a",
+        "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+        "-c:a", "aac", "-ac", "2",
+        "-vf", `fps=30,scale=1920:1080,format=yuv420p,subtitles='${srtPathForFilter}':force_style='FontName=Arial,FontSize=16,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=0,MarginV=30'${fadeEffects}`,
+        ...(audioFadeEffects ? ["-af", audioFadeEffects] : []),
+        "-shortest", out
+      ];
+
+      console.log(`[Debug ${idx+1}] Running ffmpeg with args: ffmpeg ${ffArgs.join(' ')}`);
+
+      // 8. Execute FFmpeg command
+      const { status, error } = spawnSync("ffmpeg", ffArgs, { stdio: "inherit" });
+      
+      if (status !== 0) {
+        console.error(`[Debug ${idx+1}] ffmpeg failed for ${video}. Status: ${status}`, error);
+        throw new Error(`ffmpeg failed on ${video}. Status: ${status}`);
+      }
+
+      // 9. Cleanup SRT file
+      let srtFileExistsBeforeUnlink = false;
+      try {
+        accessSync(srtPath, fsConstants.F_OK);
+        srtFileExistsBeforeUnlink = true;
+      } catch (e) {
+        srtFileExistsBeforeUnlink = false;
+      }
+      
+      if (srtFileExistsBeforeUnlink) {
+        unlinkSync(srtPath); 
+      }
+
+      console.log(`✅ Scene ${idx+1} processed successfully - Duration: ${dur}s`);
+      return dur;
+
+    } catch (error) {
+      console.error(`❌ Error processing scene ${idx+1}:`, error);
+      throw error;
+    }
+  }
+
   // Phase 1: Story Development with Structured Response (Updated for Realistic News)
   async generateStoryStructure(article, sceneCount) {
-    const systemPrompt = `You are a professional news animator who creates Disney/Pixar-style 3D animated news stories. Your job is to transform real news articles into visually appealing animated content while maintaining journalistic accuracy and realism. Use Disney/Pixar's high-quality 3D animation style but keep the content factual, realistic, and true to the news story.`;
+    const systemPrompt = `You are a professional news animator who creates Disney/Pixar-style 3D animated news stories. Your job is to transform real news articles into visually appealing animated content while maintaining journalistic accuracy and realism. Use Disney/Pixar's high-quality 3D animation style but keep the content factual, realistic, and true to the news story.
+
+    CRITICAL: When real public figures are mentioned in the article (politicians, celebrities, business leaders, etc.), you MUST include their actual names in the character descriptions. This helps create recognizable Disney/Pixar styled versions of real people.`;
     
     const userPrompt = `Transform this news article into a realistic Disney/Pixar-style 3D animated news story with exactly ${sceneCount} scenes.
 
@@ -87,14 +219,60 @@ class AnimationService {
     - Focus on the actual events, people, and facts from the news
     - Make it informative and engaging but grounded in reality
     - Characters should look professional and appropriate for the news context
+    - Characters should not have any artifact in their hands.
     - Avoid any Disney-like magical transformations, talking animals, or fantastical elements
 
+    CHARACTER NAMING GUIDELINES:
+    **CRITICAL**: If the article mentions real public figures by name, you MUST include their actual names in character descriptions. This includes:
+    - Politicians (presidents, ministers, senators, mayors, etc.)
+    - Business Leaders (CEOs, entrepreneurs, executives)
+    - Celebrities (actors, musicians, entertainers)
+    - Sports Personalities (athletes, coaches, team owners)
+    - Social Media Influencers / Content Creators
+    - Journalists and Media Personalities
+    - Religious or Spiritual Leaders
+    - Academics and Intellectuals (professors, researchers, scientists)
+    - Public Interest Litigants and Activists
+    - Models and Fashion Icons
+    - Any other recognizable public figures
+
+    **CHARACTER APPEARANCE GUIDELINES - VERY IMPORTANT**:
+    - Characters must be described WITHOUT any objects, artifacts, or items in their hands
+    - NO microphones, phones, documents, papers, tools, or any handheld items
+    - Characters should have EMPTY HANDS or hands at their sides
+    - Focus only on their physical appearance, clothing, and facial features
+    - This ensures clean character references that work across all scenes
+    
+    **AVOID in character descriptions**:
+    ❌ "holding a microphone"
+    ❌ "with a phone in hand"
+    ❌ "carrying documents"
+    ❌ "holding a clipboard"
+    ❌ "with a pen"
+    ❌ "gripping a tool"
+    
+    **GOOD character descriptions**:
+    ✅ "professional business attire, confident posture, hands at sides"
+    ✅ "formal suit, authoritative presence, empty hands"
+    ✅ "casual professional clothing, friendly expression, relaxed stance"
+
+
+    For example:
+    - If article mentions "Elon Musk", character description should be: "Elon Musk - Tech entrepreneur and CEO, rendered in Disney/Pixar 3D style with professional business attire, confident demeanor, hands at sides, no objects or artifacts"
+    - If article mentions "Taylor Swift", character description should be: "Taylor Swift - Pop star and musician, rendered in Disney/Pixar 3D style with stylish outfit, friendly expression, empty hands, no accessories or items"
+    - If article mentions "Joe Biden", character description should be: "Joe Biden - US President, rendered in Disney/Pixar 3D style with formal presidential attire, authoritative presence, hands free of any objects"
+
+    For unnamed or generic people (journalists, officials, citizens), use descriptive titles like "News Reporter", "Government Official", etc. - but still ensure they have NO objects in their hands.
+
     Create:
-    - Realistic character descriptions (scientists, politicians, business people, etc.) in Disney/Pixar 3D style
+    - Realistic character descriptions with ACTUAL NAMES when public figures are mentioned
+    - Character descriptions should include their real-world role/profession
+    - Disney/Pixar 3D styled versions of real people when applicable
+    - **Characters MUST have empty hands and no artifacts/objects**
     - Factual scene descriptions based on actual events in the article
     - Professional, news-appropriate narration
     - Scene types optimized for subtle, realistic movements
-    - Each scene should be 4-7 seconds duration for clarity`;
+    - Each scene should be 10 seconds duration for clarity, but for narration text, it should be as if each respective clip is 6-8s long `;
 
     try {
       const response = await this.openai.responses.parse({
@@ -109,6 +287,12 @@ class AnimationService {
       });
 
       const storyData = response.output_parsed;
+      for(const character of storyData.characters) {
+        if (character.name && character.description) {
+          character.description = `${character.name} - ${character.description}`;
+        }
+      }
+      console.log("StoryData", storyData);
       console.log(`✅ Realistic news story generated: "${storyData.title}" with ${storyData.characters.length} characters`);
       
       return storyData;
@@ -117,6 +301,7 @@ class AnimationService {
       throw new Error('Failed to generate story structure');
     }
   }
+
 
   // Phase 2: Character Generation with Reference Images
   async generateCharacterAssets(characters) {
@@ -129,21 +314,32 @@ class AnimationService {
         // Generate master character image
         const masterCharacterPrompt = `
         Create a Disney/Pixar style 3D character: ${character.description}. 
-        ${character.personality}. Front view, neutral expression, clean white background, 
-        high quality 3D rendering, professional Disney/Pixar animation style, 
-        vibrant colors, appealing character design.`;
+        ${character.personality}. 
+        CRITICAL REQUIREMENTS:
+        - Front view, neutral expression, clean white background
+        - High quality 3D rendering, professional Disney/Pixar animation style
+        - Vibrant colors, appealing character design
+        - HANDS MUST BE EMPTY - no objects, artifacts, or items in hands
+        - Hands should be at sides or in relaxed position
+        - NO microphones, phones, documents, tools, or any handheld items
+        - Focus on facial features, clothing, and overall appearance only
+        - Clean, uncluttered character reference suitable for all scenes`;
 
         const masterImagePath = await this.generateImage(masterCharacterPrompt);
         
         // Generate character expressions using master image as reference
-        const expressions = ['happy', 'sad', 'surprised', 'determined', 'worried'];
+        // const expressions = ['happy', 'sad', 'surprised', 'determined', 'worried'];
+        const expressions = [];
         const characterExpressions = {};
         
         for (const expression of expressions) {
-          const expressionPrompt = `
-          Change the character's expression to ${expression} while maintaining the exact same character design, 
-          style, colors, and physical appearance. Same Disney/Pixar 3D animation style, 
-          front view, white background. Keep all character features identical except the facial expression.`;
+            const expressionPrompt = `
+            Change the character's expression to ${expression} while maintaining the exact same character design, 
+            style, colors, and physical appearance. Same Disney/Pixar 3D animation style, 
+            front view, white background. Keep all character features identical except the facial expression.
+            
+            CRITICAL: Keep hands EMPTY and free of any objects, artifacts, or items - exactly like the reference image.
+            Maintain the same hand positioning and ensure no objects appear in the hands.`;  
           
           const expressionImagePath = await this.generateImageWithReference(
             [masterImagePath], 
@@ -186,7 +382,7 @@ class AnimationService {
 
         // Collect reference images for characters in this scene
         const referenceImages = [];
-        let enhancedPrompt = sanitizedDescription; // Use sanitized description
+        let enhancedPrompt = sanitizedDescription;
 
         if (scene.characters && scene.characters.length > 0) {
           // Build character reference mapping
@@ -257,9 +453,9 @@ class AnimationService {
         sceneImages.push({
           sceneNumber: scene.sceneNumber,
           image: sceneImagePath,
-          description: scene.description, // Keep original description for narration
-          sanitizedDescription: sanitizedDescription, // Store sanitized version
-          narration: scene.narration, // Narration remains unchanged
+          description: scene.description,
+          sanitizedDescription: sanitizedDescription,
+          narration: scene.narration,
           duration: scene.duration || 5,
           sceneType: scene.sceneType || 'standard',
           charactersUsed: scene.characters || [],
@@ -293,7 +489,7 @@ class AnimationService {
       try {
         console.log(`🎥 Generating video for scene ${scene.sceneNumber}`);
 
-        // Generate motion description using GPT-4 with structured response (Updated for Content Safety & Subtle Movements)
+        // Generate motion description using GPT-4 with structured response
         const motionSystemPrompt = `You are a professional news animation director. Create subtle, family-friendly motion descriptions for video generation that avoid both fast movements and any content that could be flagged as sensitive. Focus on gentle, professional movements suitable for broadcast news.`;
         
         const motionUserPrompt = `Create subtle, content-safe motion for this news scene:
@@ -345,9 +541,6 @@ class AnimationService {
 
         let motionDescription = motionResponse.output_parsed.motionDescription;
 
-        // Apply additional content safety filter to motion description
-        // motionDescription = this.sanitizeMotionForContentPolicy(motionDescription);
-
         // Enhance prompt for Disney quality
         const enhancedPrompt = this.enhancePromptForDisney(motionDescription, scene);
 
@@ -385,7 +578,7 @@ class AnimationService {
     return sceneVideos;
   }
 
-  // Enhanced Disney prompt generation (Updated for Realistic News Content with Subtle Movements)
+  // Enhanced Disney prompt generation
   enhancePromptForDisney(basePrompt, sceneContext) {
     const realisticNewsKeywords = [
       'Disney/Pixar 3D animation visual style',
@@ -416,7 +609,6 @@ class AnimationService {
       enhanced += `, ${subtleCameraKeywords[sceneContext.sceneType]}`;
     }
 
-    // Add explicit instruction for subtle movement
     enhanced += ', extremely subtle and slow movements to prevent distortion';
 
     return enhanced;
@@ -429,24 +621,34 @@ class AnimationService {
 
       // Generate narration for each scene
       const narrationPaths = [];
+
+      const voiceIds = [
+        'EXAVITQu4vr4xnSDxMaL', // Sarah
+        'pFZP5JQG7iQjIQuC4Bku', // Lily
+        'aXbjk4JoIDXdCNz29TrS', // Sunny
+        'onwK4e9ZLuTAKqWW03F9' // Daniel
+      ]
+      const selectedVoiceId = voiceIds[Math.floor(Math.random() * voiceIds.length)]
       
       for (const scene of scenes) {
         if (scene.narration && scene.narration.trim()) {
-          const audioPath = await this.generateVoice(scene.narration, scene.sceneNumber);
-          narrationPaths.push({
-            sceneNumber: scene.sceneNumber,
-            audioPath: audioPath,
-            duration: scene.duration
-          });
+          const audioPath = await this.generateVoice(scene.narration, scene.sceneNumber, selectedVoiceId);
+          if (audioPath) {
+            narrationPaths.push({
+              sceneNumber: scene.sceneNumber,
+              audioPath: audioPath,
+              duration: scene.duration
+            });
+          }
         }
       }
 
       // Generate background music
-      const musicPath = await this.generateBackgroundMusic(overallMood, scenes.length * 5);
+    //   const musicPath = await this.generateBackgroundMusic(overallMood, scenes.length * 5);
 
       return {
         narration: narrationPaths,
-        backgroundMusic: musicPath
+        // backgroundMusic: musicPath
       };
 
     } catch (error) {
@@ -455,99 +657,115 @@ class AnimationService {
     }
   }
 
-  // Phase 6: Video Assembly with FFmpeg
+  // Phase 6: Updated Video Assembly with Audio-Video Sync and Subtitles
   async assembleAnimation(sceneVideos, audioAssets, storyData) {
     try {
-      console.log('🎬 Assembling final animation...');
+      console.log('🎬 Assembling final animation with audio-video sync and subtitles...');
+      
+      const processedClipsDir = path.join(this.workingDir, 'processed');
+      await fs.mkdir(processedClipsDir, { recursive: true });
+      
+      const processedClips = [];
+      const totalClips = sceneVideos.length;
+
+      // Step 1: Process each scene (trim video to audio length, add subtitles)
+      console.log('📝 Processing individual scenes...');
+      
+      for (let i = 0; i < sceneVideos.length; i++) {
+        const sceneVideo = sceneVideos[i];
+        const sceneAudio = audioAssets.narration.find(n => n.sceneNumber === sceneVideo.sceneNumber);
+        
+        if (!sceneAudio || !sceneAudio.audioPath) {
+          console.warn(`⚠️ No audio found for scene ${sceneVideo.sceneNumber}, skipping processing`);
+          continue;
+        }
+
+        console.log(`🔧 Processing scene ${sceneVideo.sceneNumber}/${totalClips}...`);
+        
+        const processedClipPath = path.join(processedClipsDir, `processed_scene_${sceneVideo.sceneNumber}.mp4`);
+        
+        // Trim and mux with subtitles
+        const actualDuration = await this.trimAndMux({
+          video: sceneVideo.videoPath,
+          audio: sceneAudio.audioPath,
+          subtitleText: sceneVideo.narration,
+          out: processedClipPath,
+          idx: i,
+          totalClips: totalClips,
+          fadeTime: 0.5
+        });
+
+        processedClips.push({
+          sceneNumber: sceneVideo.sceneNumber,
+          path: processedClipPath,
+          duration: actualDuration
+        });
+
+        console.log(`✅ Scene ${sceneVideo.sceneNumber} processed (${actualDuration}s)`);
+      }
+
+      if (processedClips.length === 0) {
+        throw new Error('No clips were successfully processed');
+      }
+
+      // Step 2: Create concat file for FFmpeg
+      console.log('🔗 Concatenating processed clips...');
+      
+      const concatFilePath = path.join(this.workingDir, 'concat_list.txt');
+      const concatContent = processedClips
+        .sort((a, b) => a.sceneNumber - b.sceneNumber)
+        .map(clip => `file '${clip.path.replace(/\\/g, '/')}'`)
+        .join('\n');
+      
+      writeFileSync(concatFilePath, concatContent, 'utf8');
+      console.log(`📋 Concat file created with ${processedClips.length} clips`);
+
+      // Step 3: Concatenate all processed clips
       const outputPath = path.join(this.workingDir, `animation_${uuidv4()}.mp4`);
       
       return new Promise((resolve, reject) => {
-        let command = ffmpeg();
+        const ffArgs = [
+          '-f', 'concat',
+          '-safe', '0',
+          '-i', concatFilePath,
+          '-c', 'copy',
+          '-movflags', '+faststart',
+          outputPath
+        ];
 
-        // Add all scene videos in order
-        sceneVideos
-          .sort((a, b) => a.sceneNumber - b.sceneNumber)
-          .forEach(scene => {
-            command = command.input(scene.videoPath);
-          });
+        console.log(`🎞️ Final concatenation: ffmpeg ${ffArgs.join(' ')}`);
 
-        // Add background music if available
-        if (audioAssets.backgroundMusic) {
-          command = command.input(audioAssets.backgroundMusic);
-        }
-
-        // Create filter complex for video concatenation
-        let filterComplex = '';
-        let inputs = '';
-
-        // Video concatenation
-        sceneVideos.forEach((scene, index) => {
-          inputs += `[${index}:v]`;
-        });
+        const { status, error } = spawnSync('ffmpeg', ffArgs, { stdio: 'inherit' });
         
-        filterComplex += `${inputs}concat=n=${sceneVideos.length}:v=1:a=0[video];`;
-
-        // Audio processing
-        if (audioAssets.backgroundMusic) {
-          filterComplex += `[${sceneVideos.length}:a]volume=0.3[bgm];`;
-          
-          // Add narration tracks if available
-          if (audioAssets.narration && audioAssets.narration.length > 0) {
-            audioAssets.narration.forEach((narration, index) => {
-              command = command.input(narration.audioPath);
-            });
-            
-            let audioMix = '[bgm]';
-            audioAssets.narration.forEach((narration, index) => {
-              audioMix += `[${sceneVideos.length + 1 + index}:a]`;
-            });
-            audioMix += `amix=inputs=${audioAssets.narration.length + 1}:duration=longest[audio]`;
-            filterComplex += audioMix;
-          } else {
-            filterComplex += '[bgm]acopy[audio];';
-          }
-        } else {
-          // No background music, just use first video's audio or create silent audio
-          filterComplex += 'anullsrc=channel_layout=stereo:sample_rate=48000[audio];';
+        if (status !== 0) {
+          console.error('❌ Final concatenation failed:', error);
+          reject(new Error(`Final concatenation failed with status ${status}`));
+          return;
         }
 
-        command
-          .complexFilter(filterComplex)
-          .outputOptions([
-            '-map [video]',
-            '-map [audio]',
-            '-c:v libx264',
-            '-c:a aac',
-            '-r 24',
-            '-pix_fmt yuv420p',
-            '-movflags +faststart' // For web streaming
-          ])
-          .output(outputPath)
-          .on('progress', (progress) => {
-            console.log(`Assembly progress: ${Math.round(progress.percent || 0)}%`);
-          })
-          .on('end', () => {
-            console.log('✅ Video assembly completed');
-            resolve(outputPath);
-          })
-          .on('error', (err) => {
-            console.error('❌ Video assembly error:', err);
-            reject(err);
-          })
-          .run();
+        // Cleanup concat file
+        try {
+          unlinkSync(concatFilePath);
+        } catch (cleanupError) {
+          console.warn('Warning: Could not cleanup concat file:', cleanupError.message);
+        }
+
+        const totalDuration = processedClips.reduce((sum, clip) => sum + clip.duration, 0);
+        console.log(`✅ Animation assembly completed! Total duration: ${totalDuration.toFixed(1)}s`);
+        console.log(`📁 Output: ${outputPath}`);
+        
+        resolve(outputPath);
       });
 
     } catch (error) {
-      console.error('Error assembling animation:', error);
-      throw new Error('Failed to assemble animation');
+      console.error('❌ Error assembling animation:', error);
+      throw new Error(`Failed to assemble animation: ${error.message}`);
     }
   }
 
   // Content Safety Filter for Sensitive News Content
   sanitizeSceneForContentPolicy(sceneDescription, sceneType) {
-    // Keywords that might trigger content policy violations
     const sensitiveKeywords = {
-      // Violence and weapons
       'bomb': 'aftermath with debris and emergency response',
       'explosion': 'aftermath scene with smoke and debris',
       'shooting': 'emergency response and investigation scene',
@@ -558,19 +776,13 @@ class AnimationService {
       'murder': 'investigation scene with police presence',
       'killed': 'memorial and community response',
       'death': 'memorial service and community gathering',
-      
-      // Accidents and disasters
       'crash': 'aftermath scene with emergency responders',
       'accident': 'emergency response and investigation',
       'fire': 'firefighters responding and aftermath cleanup',
       'disaster': 'rescue operations and community support',
-      
-      // Protests and civil unrest
       'riot': 'peaceful community dialogue and cleanup efforts',
       'protest': 'peaceful demonstration and community voices',
       'clash': 'community leaders discussing solutions',
-      
-      // Medical emergencies
       'pandemic': 'healthcare workers and community support',
       'outbreak': 'medical professionals and prevention measures',
       'emergency': 'first responders and community assistance'
@@ -579,7 +791,6 @@ class AnimationService {
     let sanitizedDescription = sceneDescription.toLowerCase();
     let wasModified = false;
 
-    // Replace sensitive content with aftermath/response alternatives
     for (const [sensitiveWord, safeAlternative] of Object.entries(sensitiveKeywords)) {
       const regex = new RegExp(`\\b${sensitiveWord}\\b`, 'gi');
       if (regex.test(sanitizedDescription)) {
@@ -588,9 +799,7 @@ class AnimationService {
       }
     }
 
-    // Additional safety transformations
     if (wasModified) {
-      // Remove action words that might show violence
       sanitizedDescription = sanitizedDescription
         .replace(/\b(hitting|striking|fighting|attacking|destroying)\b/gi, 'showing')
         .replace(/\b(blood|gore|graphic)\b/gi, 'evidence')
@@ -607,6 +816,7 @@ class AnimationService {
       wasModified
     };
   }
+
   async generateImage(prompt) {
     try {
       const response = await this.openai.images.generate({
@@ -614,14 +824,10 @@ class AnimationService {
         prompt: prompt,
         size: '1536x1024',
         quality: 'high',
-        // response_format: 'b64_json',
         n: 1
       });
 
-      // Get base64 data from response
       const base64Data = response.data[0].b64_json;
-      
-      // Convert base64 to buffer and save to temp file
       const imageBuffer = Buffer.from(base64Data, 'base64');
       const tempImagePath = path.join(this.workingDir, `temp_image_${uuidv4()}.png`);
       
@@ -629,19 +835,17 @@ class AnimationService {
       
       console.log(`✅ Image generated with gpt-image-1 (${response.usage?.total_tokens || 'N/A'} tokens)`);
       
-      return tempImagePath; // Return local file path instead of URL
+      return tempImagePath;
     } catch (error) {
       console.error('Error generating image:', error);
       throw new Error('Failed to generate image');
     }
   }
 
-  // New method: Generate image with reference images
   async generateImageWithReference(referenceImagePaths, prompt) {
     try {
       console.log(`🖼️ Generating image with ${referenceImagePaths.length} reference images`);
 
-      // Convert file paths to OpenAI file objects
       const imageFiles = await Promise.all(
         referenceImagePaths.map(async (imagePath) => {
           return await toFile(fsSync.createReadStream(imagePath), null, {
@@ -654,13 +858,9 @@ class AnimationService {
         model: 'gpt-image-1',
         image: imageFiles,
         prompt: prompt,
-        // response_format: 'b64_json'
       });
 
-      // Get base64 data from response
       const base64Data = response.data[0].b64_json;
-      
-      // Convert base64 to buffer and save to temp file
       const imageBuffer = Buffer.from(base64Data, 'base64');
       const tempImagePath = path.join(this.workingDir, `temp_ref_image_${uuidv4()}.png`);
       
@@ -671,36 +871,28 @@ class AnimationService {
       return tempImagePath;
     } catch (error) {
       console.error('Error generating image with reference:', error);
-      
-      // Fallback: Generate without reference if reference generation fails
       console.log('🔄 Falling back to generation without reference images');
       return await this.generateImage(prompt);
     }
   }
 
-  async generateVoice(text, sceneNumber) {
+  async generateVoice(text, sceneNumber, selectedVoiceId) {
     try {
+        console.log("This is text", text)
       if (!this.elevenLabsApiKey) {
         console.warn('ElevenLabs API key not found, skipping voice generation');
         return null;
       }
 
-      const voiceIds = [
-        'EXAVITQu4vr4xnSDxMaL', // Sarah
-        'AZnzlk1XvdvUeBnXmlld', // Domi
-        'aXbjk4JoIDXdCNz29TrS', // Sunny
-        'onwK4e9ZLuTAKqWW03F9' // Daniel
-      ]
-      const selectedVoiceId = voiceIds[Math.floor(Math.random() * voiceIds.length)]
-
       const response = await axios.post(
         `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`,
         {
           text: text,
-          model_id: 'eleven_monolingual_v2',
+          model_id: 'eleven_multilingual_v2',
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
+            style: 0.0,
             use_speaker_boost: true
           }
         },
@@ -715,19 +907,17 @@ class AnimationService {
       );
 
       const audioPath = path.join(this.workingDir, 'audio', `narration_${sceneNumber}.mp3`);
-      await fs.writeFile(audioPath, response.data);
+      await fs.writeFile(audioPath, Buffer.from(response.data));
       return audioPath;
 
     } catch (error) {
       console.error('Error generating voice:', error);
-      return null; // Continue without voice if it fails
+      return null;
     }
   }
 
   async generateBackgroundMusic(mood, duration) {
     try {
-      // Placeholder for background music generation
-      // For now, create a silent audio file
       const musicPath = path.join(this.workingDir, 'audio', 'background_music.mp3');
       
       return new Promise((resolve, reject) => {
@@ -747,17 +937,14 @@ class AnimationService {
     }
   }
 
-  // Convert local image file for Kling AI usage
   async convertLocalImageForKlingAI(localImagePath) {
     try {
-      // Option 1: Upload to ImageKit temporarily and return URL
       if (this.imagekitApiKey && this.imagekitPrivateKey && this.imagekitEndpoint) {
         const tempFileName = `temp_${uuidv4()}.png`;
         const tempUrl = await this.uploadToImageKit(localImagePath, tempFileName);
         return tempUrl;
       }
       
-      // Option 2: Convert to data URL (base64)
       const imageBuffer = await fs.readFile(localImagePath);
       const base64Data = imageBuffer.toString('base64');
       return `data:image/png;base64,${base64Data}`;
@@ -770,8 +957,6 @@ class AnimationService {
 
   async downloadImage(url, filename) {
     try {
-      // This method is now only used for downloading from URLs
-      // Since gpt-image-1 returns base64, this is mainly for fallback scenarios
       const response = await axios({
         method: 'GET',
         url: url,
@@ -792,15 +977,12 @@ class AnimationService {
     try {
       const targetPath = path.join(this.workingDir, filename);
       
-      // Ensure directory exists
       const dir = path.dirname(targetPath);
       await fs.mkdir(dir, { recursive: true });
       
       if (imagePathOrUrl.startsWith('http')) {
-        // It's a URL, download it
         await this.downloadImage(imagePathOrUrl, filename);
       } else {
-        // It's a local file path, copy it
         await fs.copyFile(imagePathOrUrl, targetPath);
       }
       
@@ -880,6 +1062,7 @@ class AnimationService {
       const storyData = await this.generateStoryStructure(article, sceneCount);
       storyData.originalArticle = article;
       console.log(`✅ Story created: "${storyData.title}"`);
+    //   console.log(`✅ Story created: "${storyData.characters[0]}"`);
 
       // Phase 2: Character Generation
       console.log('\n🎭 Phase 2: Generating character assets...');
@@ -895,82 +1078,102 @@ class AnimationService {
       console.log('\n🎥 Phase 4: Generating scene videos with Kling AI...');
       const sceneVideos = await this.generateSceneVideos(sceneImages);
       console.log(`✅ Generated ${sceneVideos.length} scene videos`);
+      console.log(sceneVideos)
 
       // Phase 5: Audio Generation
       console.log('\n🎵 Phase 5: Generating audio assets...');
       const audioAssets = await this.generateAudioAssets(storyData.scenes, storyData.overallMood);
       console.log(`✅ Generated audio for ${audioAssets.narration.length} scenes`);
 
-      // Phase 6: Video Assembly
-      console.log('\n🎬 Phase 6: Assembling final animation...');
+      // Phase 6: Video Assembly with Audio-Video Sync and Subtitles
+      console.log('\n🎬 Phase 6: Assembling final animation with audio sync and subtitles...');
       finalVideoPath = await this.assembleAnimation(sceneVideos, audioAssets, storyData);
-      console.log('✅ Animation assembly completed');
+      console.log('✅ Animation assembly completed', finalVideoPath);
 
       // Upload to ImageKit
-      console.log('\n☁️ Uploading to ImageKit...');
-      const videoFileName = `animation_${Date.now()}.mp4`;
-      const finalVideoUrl = await this.uploadToImageKit(finalVideoPath, videoFileName);
-      console.log('✅ Upload completed');
-
-      // Save to database
-      const processingTime = Date.now() - startTime;
-      storyData.processingTime = processingTime;
+    //   console.log('\n☁️ Uploading to ImageKit...');
+    //   const videoFileName = `animation_${Date.now()}.mp4`;
+    //   const finalVideoUrl = await this.uploadToImageKit(finalVideoPath, videoFileName);
+    //   console.log('✅ Upload completed');
       
-      const animationRecord = await this.saveAnimationToDatabase(storyData, finalVideoUrl);
+    const outputDir = path.join(process.cwd(), 'public', 'animations');
+    await fs.mkdir(outputDir, { recursive: true });
+    
+    const permanentVideoFileName = `animation_${Date.now()}_${uuidv4()}.mp4`;
+    const permanentVideoPath = path.join(outputDir, permanentVideoFileName);
+    
+    // Copy final video to permanent location
+    await fs.copyFile(finalVideoPath, permanentVideoPath);
+    console.log(`📁 Final video saved to: ${permanentVideoPath}`);
+
+    // Save to database with local file path
+    const processingTime = Date.now() - startTime;
+    storyData.processingTime = processingTime;
+
+      
+      const animationRecord = await this.saveAnimationToDatabase(storyData, permanentVideoPath);
 
       // Cleanup temp files
-      await this.cleanupTempFiles();
+    //   await this.cleanupTempFiles();
 
       console.log(`\n🎉 Animation generation completed successfully!`);
       console.log(`⏱️ Total processing time: ${(processingTime / 1000 / 60).toFixed(1)} minutes`);
+      console.log(`📂 Final video path: ${permanentVideoPath}`);
       
       return {
         success: true,
         animationId: animationRecord._id,
-        videoUrl: finalVideoUrl,
+        videoPath: permanentVideoPath,
+        videoUrl: permanentVideoPath, // For backward compatibility
         title: storyData.title,
         processingTime: processingTime,
         sceneCount: storyData.scenes.length
       };
 
     } catch (error) {
-      console.error('❌ Animation generation failed:', error);
+        console.error('❌ Animation generation failed:', error);
       
-      // Cleanup on error
-      if (finalVideoPath) {
-        try {
-          await fs.unlink(finalVideoPath);
-        } catch (cleanupError) {
-          console.error('Error cleaning up video file:', cleanupError);
+        // Cleanup on error (but preserve permanent video if it exists)
+        if (finalVideoPath) {
+          try {
+            // Only delete the temp video if it exists and is different from permanent location
+            const outputDir = path.join(process.cwd(), 'public', 'animations');
+            if (!finalVideoPath.startsWith(outputDir)) {
+              await fs.unlink(finalVideoPath);
+            }
+          } catch (cleanupError) {
+            console.error('Error cleaning up video file:', cleanupError);
+          }
         }
-      }
-      
-      throw new Error(`Animation generation failed: ${error.message}`);
+        
+        throw new Error(`Animation generation failed: ${error.message}`);
     }
   }
 
   async cleanupTempFiles() {
     try {
-      console.log('🧹 Cleaning up temporary files...');
+      console.log('🧹 Cleaning up all temporary files and directories...');
       
-      const directories = ['characters', 'scenes', 'videos', 'audio'];
+      // Since the final video is now saved in public/animations/, 
+      // we can safely delete the entire temp working directory
+      const tempDirExists = await fs.access(this.workingDir).then(() => true).catch(() => false);
       
-      for (const dir of directories) {
-        const dirPath = path.join(this.workingDir, dir);
-        try {
-          const files = await fs.readdir(dirPath);
-          for (const file of files) {
-            const filePath = path.join(dirPath, file);
-            await fs.unlink(filePath);
-          }
-        } catch (error) {
-          // Directory might not exist or be empty, ignore
-        }
+      if (tempDirExists) {
+        // Remove the entire temp working directory and all its contents
+        await fs.rm(this.workingDir, { recursive: true, force: true });
+        console.log(`✅ Deleted entire temp directory: ${this.workingDir}`);
+        
+        // Recreate the basic structure for next use
+        await this.ensureDirectoryExists();
+        console.log('📁 Recreated basic temp directory structure');
+      } else {
+        console.log('ℹ️ Temp directory does not exist, skipping cleanup');
       }
       
-      console.log('✅ Cleanup completed');
+      console.log('✅ Cleanup completed - Final video preserved in public/animations/');
     } catch (error) {
-      console.error('Error cleaning up temp files:', error);
+      console.error('❌ Error during temp files cleanup:', error);
+      // Don't throw error as this is cleanup - log and continue
     }
   }
 }
