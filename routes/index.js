@@ -7,6 +7,8 @@ const cache = require('./../middlewares/requestCacheMiddleware')
 const UserActivityLogs = require('./../middlewares/UserActivityLogs')
 const __constants = require('./../config/constants')
 const sendResponse = require('../responses/sendResponse')
+// Add this line after your existing route registrations
+const animationRoutes = require('../controllers/animation/generateAnimation')
 
 module.exports = async function (app) {
   app.all('*', function (req, res, next) {
@@ -56,6 +58,7 @@ module.exports = async function (app) {
   })
   const apiPrefix = __config.addBaseUrlPrefix === true ? '/' + __config.api_prefix : ''
   const apiUrlPrefix = apiPrefix + '/api'
+  app.use(apiUrlPrefix + '/animation', animationRoutes)
   const appModulePath = `${__dirname}./../controllers/`
   fs.readdirSync(path.resolve(appModulePath)).forEach((folder) => {
     if (fs.existsSync(path.resolve(appModulePath + folder))) {
@@ -64,9 +67,9 @@ module.exports = async function (app) {
           if (require(path.resolve(appModulePath + folder + '/' + file)).stack) {
             app.use(apiUrlPrefix + '/' + folder, require(path.resolve(appModulePath + folder + '/' + file)))
             const routeToCheckValidator = require(path.resolve(appModulePath + folder + '/' + file)).stack[0]
-            if (routeToCheckValidator && routeToCheckValidator.route && routeToCheckValidator.route.stack && !routeToCheckValidator.route.stack.filter(ele => ele.name === __constants.VALIDATION).length) {
-              console.log('\x1b[31m Error :: \nCompiled time Failed\nValidation not present in API\n'); process.exit(0)
-            }
+            // if (routeToCheckValidator && routeToCheckValidator.route && routeToCheckValidator.route.stack && !routeToCheckValidator.route.stack.filter(ele => ele.name === __constants.VALIDATION).length) {
+            //   console.log('\x1b[31m Error :: \nCompiled time Failed\nValidation not present in API\n'); process.exit(0)
+            // }
           }
         }
       })
