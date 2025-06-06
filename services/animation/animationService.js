@@ -936,7 +936,7 @@ class AnimationService {
         model: 'gpt-image-1',
         prompt: prompt,
         size: '1536x1024',
-        quality: 'high',
+        quality: 'medium',
         n: 1,
         moderation: 'low'
       });
@@ -973,7 +973,7 @@ class AnimationService {
         image: imageFiles,
         prompt: prompt,
         size: '1536x1024',
-        quality: 'high'
+        quality: 'medium',
       });
 
       const base64Data = response.data[0].b64_json;
