@@ -351,7 +351,7 @@ class KlingAIService {
           }
         }
         
-        return await this.generateVideoViaReplicate(imageUrl, enhancedPrompt, duration, '16:9', 'pro');
+        return await this.generateVideoViaReplicate(imageUrl, enhancedPrompt, duration, '16:9', 'std');
       } catch (replicateError) {
         console.warn('⚠️ Replicate failed, falling back to direct Kling AI API with camera controls');
         console.warn(`   Replicate error: ${replicateError.message}`);

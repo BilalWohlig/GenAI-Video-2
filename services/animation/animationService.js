@@ -53,6 +53,16 @@ const MotionDescriptionSchema = z.object({
   motionDescription: z.string().max(150)
 });
 
+// New schema for country detection
+const CountryDetectionSchema = z.object({
+  primaryCountry: z.string(),
+  primaryCity: z.string().nullable().optional(),
+  culturalContext: z.string(),
+  architecturalStyle: z.string(),
+  demographicNotes: z.string(),
+  languageContext: z.string()
+});
+
 class AnimationService {
   constructor() {
     this.openai = new OpenAI({
@@ -78,6 +88,54 @@ class AnimationService {
       await fs.mkdir(path.join(this.workingDir, 'processed'), { recursive: true });
     } catch (error) {
       console.error('Error creating directories:', error);
+    }
+  }
+
+  // NEW METHOD: Detect country and cultural context from article
+  async detectCountryContext(article) {
+    const systemPrompt = `You are a geographical and cultural analysis expert. Analyze news articles to identify the primary country/region where events are taking place and provide relevant cultural context for animation production.`;
+    
+    const userPrompt = `Analyze this news article and identify the primary country where the events are taking place. Also provide cultural context that would be important for creating authentic location settings and background characters.
+
+    Article: ${article}
+
+    Provide:
+    - Primary country where events occur
+    - Primary city (if clearly mentioned)
+    - Cultural context relevant for visual representation
+    - Architectural style typical for that region
+    - Demographic notes for background characters (ethnicity, typical clothing, etc.)
+    - Language context (for signs, text in scenes)
+
+    If multiple countries are mentioned, focus on where the main events are happening. If unclear, provide your best assessment based on context clues.`;
+
+    try {
+      const response = await this.openai.responses.parse({
+        model: "gpt-4o-2024-08-06",
+        input: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        text: {
+          format: zodTextFormat(CountryDetectionSchema, "countryContext")
+        }
+      });
+
+      const countryContext = response.output_parsed;
+      console.log(`🌍 Detected country context: ${countryContext.primaryCountry}${countryContext.primaryCity ? ` (${countryContext.primaryCity})` : ''}`);
+      
+      return countryContext;
+    } catch (error) {
+      console.error('Error detecting country context:', error);
+      // Return default context if detection fails
+      return {
+        primaryCountry: 'International',
+        primaryCity: null,
+        culturalContext: 'Modern urban setting with diverse population',
+        architecturalStyle: 'Contemporary international architecture',
+        demographicNotes: 'Diverse, modern professional attire',
+        languageContext: 'English signage and text'
+      };
     }
   }
 
@@ -201,26 +259,53 @@ class AnimationService {
     }
   }
 
-  // Phase 1: Story Development with Structured Response (Updated for Realistic News)
+  // UPDATED: Phase 1: Story Development with Country Context
   async generateStoryStructure(article, sceneCount) {
+    // First, detect the country context
+    const countryContext = await this.detectCountryContext(article);
+
     const systemPrompt = `You are a professional news animator who creates Disney/Pixar-style 3D animated news stories. Your job is to transform real news articles into visually appealing animated content while maintaining journalistic accuracy and realism. Use Disney/Pixar's high-quality 3D animation style but keep the content factual, realistic, and true to the news story.
 
-    CRITICAL: When real public figures are mentioned in the article (politicians, celebrities, business leaders, etc.), you MUST include their actual names in the character descriptions. This helps create recognizable Disney/Pixar styled versions of real people.`;
+    CRITICAL: When real public figures are mentioned in the article (politicians, celebrities, business leaders, etc.), you MUST include their actual names in the character descriptions. This helps create recognizable Disney/Pixar styled versions of real people.
+
+    COUNTRY & CULTURAL CONTEXT: This story takes place primarily in ${countryContext.primaryCountry}${countryContext.primaryCity ? ` (${countryContext.primaryCity})` : ''}. Ensure all locations, general public characters, and cultural elements are authentic to this region.`;
     
     const userPrompt = `Transform this news article into a realistic Disney/Pixar-style 3D animated news story with exactly ${sceneCount} scenes.
 
     Article: ${article}
 
+    COUNTRY-SPECIFIC REQUIREMENTS:
+    🌍 PRIMARY LOCATION: ${countryContext.primaryCountry}${countryContext.primaryCity ? ` (${countryContext.primaryCity})` : ''}
+    🏛️ ARCHITECTURAL STYLE: ${countryContext.architecturalStyle}
+    👥 DEMOGRAPHIC CONTEXT: ${countryContext.demographicNotes}
+    🗣️ LANGUAGE CONTEXT: ${countryContext.languageContext}
+    🎭 CULTURAL CONTEXT: ${countryContext.culturalContext}
+
     IMPORTANT GUIDELINES:
     - Keep the story FACTUAL and REALISTIC - no magic, fantasy, or fictional elements
     - Use Disney/Pixar 3D animation VISUAL STYLE only (high-quality 3D rendering, appealing character designs, vibrant colors)
     - Characters should be realistic people/professionals, not magical beings
-    - Settings should be real-world locations (offices, cities, laboratories, etc.)
+    - Settings should be real-world locations specific to ${countryContext.primaryCountry}
     - Focus on the actual events, people, and facts from the news
     - Make it informative and engaging but grounded in reality
     - Characters should look professional and appropriate for the news context
     - Characters should not have any artifact in their hands.
     - Avoid any Disney-like magical transformations, talking animals, or fantastical elements
+
+    COUNTRY-SPECIFIC CHARACTER & LOCATION GUIDELINES:
+    🏢 LOCATIONS: Use authentic ${countryContext.primaryCountry} settings:
+    - Government buildings should reflect ${countryContext.primaryCountry}'s architectural style
+    - Street scenes should show typical ${countryContext.primaryCountry} urban/suburban environments
+    - Office buildings, schools, hospitals should match local architectural standards
+    - Include appropriate signage and text in ${countryContext.languageContext}
+    - Backgrounds should reflect ${countryContext.culturalContext}
+
+    👥 GENERAL PUBLIC CHARACTERS (non-famous people): 
+    - Reflect authentic ${countryContext.primaryCountry} demographics: ${countryContext.demographicNotes}
+    - Clothing should be appropriate for ${countryContext.primaryCountry} professional/casual standards
+    - Facial features and appearances should be representative of ${countryContext.primaryCountry} population
+    - Names for unnamed characters should be culturally appropriate for ${countryContext.primaryCountry}
+    - Professional attire should match ${countryContext.primaryCountry} business culture
 
     CHARACTER NAMING GUIDELINES:
     **CRITICAL**: If the article mentions real public figures by name, you MUST include their actual names in character descriptions. This includes:
@@ -235,6 +320,8 @@ class AnimationService {
     - Public Interest Litigants and Activists
     - Models and Fashion Icons
     - Any other recognizable public figures
+
+    For general public/unnamed characters (citizens, officials, workers), use culturally appropriate names for ${countryContext.primaryCountry} and ensure their appearance reflects local demographics.
 
     **CHARACTER APPEARANCE GUIDELINES - VERY IMPORTANT**:
     - Characters must be described WITHOUT any objects, artifacts, or items in their hands
@@ -252,27 +339,25 @@ class AnimationService {
     ❌ "gripping a tool"
     
     **GOOD character descriptions**:
-    ✅ "professional business attire, confident posture, hands at sides"
-    ✅ "formal suit, authoritative presence, empty hands"
-    ✅ "casual professional clothing, friendly expression, relaxed stance"
-
+    ✅ "professional business attire appropriate for ${countryContext.primaryCountry}, confident posture, hands at sides"
+    ✅ "formal suit matching ${countryContext.primaryCountry} government official style, authoritative presence, empty hands"
+    ✅ "casual professional clothing typical of ${countryContext.primaryCountry}, friendly expression, relaxed stance"
 
     For example:
     - If article mentions "Elon Musk", character description should be: "Elon Musk - Tech entrepreneur and CEO, rendered in Disney/Pixar 3D style with professional business attire, confident demeanor, hands at sides, no objects or artifacts"
-    - If article mentions "Taylor Swift", character description should be: "Taylor Swift - Pop star and musician, rendered in Disney/Pixar 3D style with stylish outfit, friendly expression, empty hands, no accessories or items"
-    - If article mentions "Joe Biden", character description should be: "Joe Biden - US President, rendered in Disney/Pixar 3D style with formal presidential attire, authoritative presence, hands free of any objects"
-
-    For unnamed or generic people (journalists, officials, citizens), use descriptive titles like "News Reporter", "Government Official", etc. - but still ensure they have NO objects in their hands.
+    - For general public: "Local ${countryContext.primaryCountry} Citizen - Middle-aged person with appearance typical of ${countryContext.primaryCountry} demographics, wearing ${countryContext.demographicNotes}, friendly expression, hands free of any objects"
 
     Create:
     - Realistic character descriptions with ACTUAL NAMES when public figures are mentioned
+    - General public characters that authentically represent ${countryContext.primaryCountry} demographics
     - Character descriptions should include their real-world role/profession
     - Disney/Pixar 3D styled versions of real people when applicable
     - **Characters MUST have empty hands and no artifacts/objects**
     - Factual scene descriptions based on actual events in the article
+    - Locations that are authentic to ${countryContext.primaryCountry}
     - Professional, news-appropriate narration
     - Scene types optimized for subtle, realistic movements
-    - Each scene should be 10 seconds duration for clarity, but for narration text, it should be as if each respective clip is 6-8s long `;
+    - Each scene should be 10 seconds duration for clarity, but for narration text, it should be as if each respective clip is 6-8s long`;
 
     try {
       const response = await this.openai.responses.parse({
@@ -287,13 +372,20 @@ class AnimationService {
       });
 
       const storyData = response.output_parsed;
+      
+      // Add country context to story data
+      storyData.countryContext = countryContext;
+      
       for(const character of storyData.characters) {
         if (character.name && character.description) {
           character.description = `${character.name} - ${character.description}`;
         }
       }
-      console.log("StoryData", storyData);
-      console.log(`✅ Realistic news story generated: "${storyData.title}" with ${storyData.characters.length} characters`);
+      
+      console.log("StoryData", storyData.scenes);
+      
+      console.log(`✅ Country-aware news story generated: "${storyData.title}" with ${storyData.characters.length} characters`);
+      console.log(`🌍 Tailored for: ${countryContext.primaryCountry}${countryContext.primaryCity ? ` (${countryContext.primaryCity})` : ''}`);
       
       return storyData;
     } catch (error) {
@@ -302,19 +394,25 @@ class AnimationService {
     }
   }
 
-
-  // Phase 2: Character Generation with Reference Images
-  async generateCharacterAssets(characters) {
+  // UPDATED: Phase 2: Character Generation with Country Context
+  async generateCharacterAssets(characters, countryContext) {
     const characterAssets = {};
 
     for (const character of characters) {
       try {
-        console.log(`🎭 Generating character: ${character.name}`);
+        console.log(`🎭 Generating country-appropriate character: ${character.name}`);
 
-        // Generate master character image
+        // Generate master character image with country context
         const masterCharacterPrompt = `
         Create a Disney/Pixar style 3D character: ${character.description}. 
         ${character.personality}. 
+        
+        COUNTRY CONTEXT: This character is in ${countryContext.primaryCountry}. Ensure authenticity:
+        - Appearance should reflect ${countryContext.demographicNotes}
+        - Clothing style appropriate for ${countryContext.primaryCountry} professional/cultural standards
+        - Facial features representative of ${countryContext.primaryCountry} population (if applicable)
+        - Cultural authenticity in overall presentation
+        
         CRITICAL REQUIREMENTS:
         - Front view, neutral expression, clean white background
         - High quality 3D rendering, professional Disney/Pixar animation style
@@ -323,12 +421,12 @@ class AnimationService {
         - Hands should be at sides or in relaxed position
         - NO microphones, phones, documents, tools, or any handheld items
         - Focus on facial features, clothing, and overall appearance only
-        - Clean, uncluttered character reference suitable for all scenes`;
+        - Clean, uncluttered character reference suitable for all scenes
+        - Authentic to ${countryContext.primaryCountry} cultural context`;
 
         const masterImagePath = await this.generateImage(masterCharacterPrompt);
         
         // Generate character expressions using master image as reference
-        // const expressions = ['happy', 'sad', 'surprised', 'determined', 'worried'];
         const expressions = [];
         const characterExpressions = {};
         
@@ -337,6 +435,7 @@ class AnimationService {
             Change the character's expression to ${expression} while maintaining the exact same character design, 
             style, colors, and physical appearance. Same Disney/Pixar 3D animation style, 
             front view, white background. Keep all character features identical except the facial expression.
+            Maintain cultural authenticity for ${countryContext.primaryCountry}.
             
             CRITICAL: Keep hands EMPTY and free of any objects, artifacts, or items - exactly like the reference image.
             Maintain the same hand positioning and ensure no objects appear in the hands.`;  
@@ -351,14 +450,15 @@ class AnimationService {
         characterAssets[character.name] = {
           master: masterImagePath,
           expressions: characterExpressions,
-          description: character.description
+          description: character.description,
+          countryContext: countryContext
         };
 
         // Copy to permanent character directory
         const permanentPath = path.join(this.workingDir, 'characters', `${character.name}_master.png`);
         await fs.copyFile(masterImagePath, permanentPath);
         
-        console.log(`✅ Generated character ${character.name} with ${expressions.length} expressions`);
+        console.log(`✅ Generated ${countryContext.primaryCountry}-appropriate character ${character.name} with ${expressions.length} expressions`);
         
       } catch (error) {
         console.error(`Error generating character ${character.name}:`, error);
@@ -369,13 +469,13 @@ class AnimationService {
     return characterAssets;
   }
 
-  // Phase 3: Scene Generation with Character Reference Images (Updated for Content Safety)
-  async generateSceneImages(scenes, characterAssets) {
+  // UPDATED: Phase 3: Scene Generation with Country Context
+  async generateSceneImages(scenes, characterAssets, countryContext) {
     const sceneImages = [];
 
     for (const scene of scenes) {
       try {
-        console.log(`🎬 Generating realistic news scene ${scene.sceneNumber}: ${scene.description.substring(0, 50)}...`);
+        console.log(`🎬 Generating ${countryContext.primaryCountry}-authentic scene ${scene.sceneNumber}: ${scene.description.substring(0, 50)}...`);
 
         // Apply content safety filter
         const { sanitizedDescription, wasModified } = this.sanitizeSceneForContentPolicy(scene.description, scene.sceneType);
@@ -410,12 +510,26 @@ class AnimationService {
           }
         }
 
-        // Build complete realistic scene prompt with content safety considerations
+        // Build complete realistic scene prompt with country context
         let fullScenePrompt = `
         Realistic news scene in Disney/Pixar 3D animation style: ${enhancedPrompt}
         Location: ${scene.location}
         Mood: ${scene.mood}
         Camera angle: ${scene.cameraAngle}
+        
+        COUNTRY-SPECIFIC AUTHENTICITY FOR ${countryContext.primaryCountry}:
+        🏛️ Architecture: ${countryContext.architecturalStyle}
+        🌍 Cultural Setting: ${countryContext.culturalContext}
+        🗣️ Signage/Text: ${countryContext.languageContext}
+        👥 Background People: ${countryContext.demographicNotes}
+        
+        Ensure the scene authentically represents ${countryContext.primaryCountry}:
+        - Buildings and infrastructure should match ${countryContext.architecturalStyle}
+        - Street scenes should include typical ${countryContext.primaryCountry} elements (vehicles, street furniture, etc.)
+        - Background characters should reflect local demographics
+        - Signage and text should be in appropriate language(s)
+        - Environmental details should be culturally accurate
+        - Weather and lighting appropriate for the region
         
         High quality 3D rendering, professional lighting, detailed realistic environment, 
         Disney/Pixar animation visual quality, vibrant but realistic colors, engaging composition.
@@ -431,19 +545,20 @@ class AnimationService {
         
         REALISTIC REQUIREMENTS:
         - No magical elements, fantasy creatures, or fictional aspects
-        - Professional, real-world setting appropriate for news content
-        - Realistic human characters in appropriate professional attire
-        - Modern, contemporary environments (offices, laboratories, city streets, etc.)
-        - Maintain journalistic accuracy and realism
+        - Professional, real-world setting appropriate for news content in ${countryContext.primaryCountry}
+        - Realistic human characters in appropriate professional attire for ${countryContext.primaryCountry}
+        - Modern, contemporary ${countryContext.primaryCountry} environments (offices, laboratories, city streets, etc.)
+        - Maintain journalistic accuracy and cultural authenticity
         
         Maintain character consistency with the reference images. Keep the exact same character designs, 
-        colors, and physical features from the reference images. Ensure professional, realistic appearance.`;
+        colors, and physical features from the reference images. Ensure professional, realistic appearance
+        appropriate for ${countryContext.primaryCountry} context.`;
 
         let sceneImagePath;
 
         if (referenceImages.length > 0) {
           // Generate scene with character references
-          console.log(`   Using ${referenceImages.length} character reference images for content-safe realistic scene`);
+          console.log(`   Using ${referenceImages.length} character reference images for ${countryContext.primaryCountry}-authentic scene`);
           sceneImagePath = await this.generateImageWithReference(referenceImages, fullScenePrompt);
         } else {
           // Generate scene without character references
@@ -459,7 +574,8 @@ class AnimationService {
           duration: scene.duration || 5,
           sceneType: scene.sceneType || 'standard',
           charactersUsed: scene.characters || [],
-          contentModified: wasModified
+          contentModified: wasModified,
+          countryContext: countryContext
         });
 
         // Copy to permanent scene directory
@@ -467,9 +583,9 @@ class AnimationService {
         await fs.copyFile(sceneImagePath, permanentPath);
 
         if (wasModified) {
-          console.log(`✅ Content-safe realistic news scene ${scene.sceneNumber} generated (content modified for safety)`);
+          console.log(`✅ Content-safe ${countryContext.primaryCountry}-authentic scene ${scene.sceneNumber} generated (content modified for safety)`);
         } else {
-          console.log(`✅ Realistic news scene ${scene.sceneNumber} generated with ${scene.characters?.length || 0} character references`);
+          console.log(`✅ ${countryContext.primaryCountry}-authentic scene ${scene.sceneNumber} generated with ${scene.characters?.length || 0} character references`);
         }
 
       } catch (error) {
@@ -481,7 +597,7 @@ class AnimationService {
     return sceneImages;
   }
 
-  // Phase 4: Video Generation with Kling AI
+  // Phase 4: Video Generation with Kling AI (unchanged)
   async generateSceneVideos(sceneImages) {
     const sceneVideos = [];
 
@@ -578,7 +694,7 @@ class AnimationService {
     return sceneVideos;
   }
 
-  // Enhanced Disney prompt generation
+  // Enhanced Disney prompt generation (unchanged)
   enhancePromptForDisney(basePrompt, sceneContext) {
     const realisticNewsKeywords = [
       'Disney/Pixar 3D animation visual style',
@@ -614,7 +730,7 @@ class AnimationService {
     return enhanced;
   }
 
-  // Phase 5: Audio Generation
+  // Phase 5: Audio Generation (unchanged)
   async generateAudioAssets(scenes, overallMood) {
     try {
       console.log('🎵 Generating audio assets...');
@@ -643,12 +759,8 @@ class AnimationService {
         }
       }
 
-      // Generate background music
-    //   const musicPath = await this.generateBackgroundMusic(overallMood, scenes.length * 5);
-
       return {
         narration: narrationPaths,
-        // backgroundMusic: musicPath
       };
 
     } catch (error) {
@@ -657,7 +769,7 @@ class AnimationService {
     }
   }
 
-  // Phase 6: Updated Video Assembly with Audio-Video Sync and Subtitles
+  // Phase 6: Updated Video Assembly (unchanged)
   async assembleAnimation(sceneVideos, audioAssets, storyData) {
     try {
       console.log('🎬 Assembling final animation with audio-video sync and subtitles...');
@@ -763,7 +875,7 @@ class AnimationService {
     }
   }
 
-  // Content Safety Filter for Sensitive News Content
+  // Content Safety Filter (unchanged)
   sanitizeSceneForContentPolicy(sceneDescription, sceneType) {
     const sensitiveKeywords = {
       'bomb': 'aftermath with debris and emergency response',
@@ -817,6 +929,7 @@ class AnimationService {
     };
   }
 
+  // Helper methods (unchanged)
   async generateImage(prompt) {
     try {
       const response = await this.openai.images.generate({
@@ -824,7 +937,8 @@ class AnimationService {
         prompt: prompt,
         size: '1536x1024',
         quality: 'high',
-        n: 1
+        n: 1,
+        moderation: 'low'
       });
 
       const base64Data = response.data[0].b64_json;
@@ -858,6 +972,8 @@ class AnimationService {
         model: 'gpt-image-1',
         image: imageFiles,
         prompt: prompt,
+        size: '1536x1024',
+        quality: 'high'
       });
 
       const base64Data = response.data[0].b64_json;
@@ -939,11 +1055,11 @@ class AnimationService {
 
   async convertLocalImageForKlingAI(localImagePath) {
     try {
-      if (this.imagekitApiKey && this.imagekitPrivateKey && this.imagekitEndpoint) {
-        const tempFileName = `temp_${uuidv4()}.png`;
-        const tempUrl = await this.uploadToImageKit(localImagePath, tempFileName);
-        return tempUrl;
-      }
+    //   if (this.imagekitApiKey && this.imagekitPrivateKey && this.imagekitEndpoint) {
+    //     const tempFileName = `temp_${uuidv4()}.png`;
+    //     const tempUrl = await this.uploadToImageKit(localImagePath, tempFileName);
+    //     return tempUrl;
+    //   }
       
       const imageBuffer = await fs.readFile(localImagePath);
       const base64Data = imageBuffer.toString('base64');
@@ -1047,38 +1163,37 @@ class AnimationService {
     }
   }
 
-  // Main pipeline execution
+  // UPDATED: Main pipeline execution with country context
   async generateAnimation(article, sceneCount) {
     const startTime = Date.now();
     let finalVideoPath = null;
     
     try {
-      console.log('🎬 Starting Disney animation generation pipeline...');
+      console.log('🎬 Starting country-aware Disney animation generation pipeline...');
       console.log(`📄 Article length: ${article.length} characters`);
       console.log(`🎭 Scenes to generate: ${sceneCount}`);
 
-      // Phase 1: Story Development
-      console.log('\n📝 Phase 1: Generating story structure...');
+      // Phase 1: Story Development with Country Detection
+      console.log('\n📝 Phase 1: Generating country-aware story structure...');
       const storyData = await this.generateStoryStructure(article, sceneCount);
       storyData.originalArticle = article;
       console.log(`✅ Story created: "${storyData.title}"`);
-    //   console.log(`✅ Story created: "${storyData.characters[0]}"`);
+      console.log(`🌍 Country context: ${storyData.countryContext.primaryCountry}`);
 
-      // Phase 2: Character Generation
-      console.log('\n🎭 Phase 2: Generating character assets...');
-      const characterAssets = await this.generateCharacterAssets(storyData.characters);
-      console.log(`✅ Generated ${Object.keys(characterAssets).length} characters`);
+      // Phase 2: Character Generation with Country Context
+      console.log('\n🎭 Phase 2: Generating country-appropriate character assets...');
+      const characterAssets = await this.generateCharacterAssets(storyData.characters, storyData.countryContext);
+      console.log(`✅ Generated ${Object.keys(characterAssets).length} characters for ${storyData.countryContext.primaryCountry}`);
 
-      // Phase 3: Scene Generation
-      console.log('\n🖼️ Phase 3: Generating scene images...');
-      const sceneImages = await this.generateSceneImages(storyData.scenes, characterAssets);
-      console.log(`✅ Generated ${sceneImages.length} scene images`);
+      // Phase 3: Scene Generation with Country Context
+      console.log('\n🖼️ Phase 3: Generating country-authentic scene images...');
+      const sceneImages = await this.generateSceneImages(storyData.scenes, characterAssets, storyData.countryContext);
+      console.log(`✅ Generated ${sceneImages.length} ${storyData.countryContext.primaryCountry}-authentic scene images`);
 
       // Phase 4: Video Generation
       console.log('\n🎥 Phase 4: Generating scene videos with Kling AI...');
       const sceneVideos = await this.generateSceneVideos(sceneImages);
       console.log(`✅ Generated ${sceneVideos.length} scene videos`);
-      console.log(sceneVideos)
 
       // Phase 5: Audio Generation
       console.log('\n🎵 Phase 5: Generating audio assets...');
@@ -1090,33 +1205,25 @@ class AnimationService {
       finalVideoPath = await this.assembleAnimation(sceneVideos, audioAssets, storyData);
       console.log('✅ Animation assembly completed', finalVideoPath);
 
-      // Upload to ImageKit
-    //   console.log('\n☁️ Uploading to ImageKit...');
-    //   const videoFileName = `animation_${Date.now()}.mp4`;
-    //   const finalVideoUrl = await this.uploadToImageKit(finalVideoPath, videoFileName);
-    //   console.log('✅ Upload completed');
+      // Save to permanent location
+      const outputDir = path.join(process.cwd(), 'public', 'animations');
+      await fs.mkdir(outputDir, { recursive: true });
       
-    const outputDir = path.join(process.cwd(), 'public', 'animations');
-    await fs.mkdir(outputDir, { recursive: true });
-    
-    const permanentVideoFileName = `animation_${Date.now()}_${uuidv4()}.mp4`;
-    const permanentVideoPath = path.join(outputDir, permanentVideoFileName);
-    
-    // Copy final video to permanent location
-    await fs.copyFile(finalVideoPath, permanentVideoPath);
-    console.log(`📁 Final video saved to: ${permanentVideoPath}`);
+      const permanentVideoFileName = `animation_${Date.now()}_${uuidv4()}.mp4`;
+      const permanentVideoPath = path.join(outputDir, permanentVideoFileName);
+      
+      // Copy final video to permanent location
+      await fs.copyFile(finalVideoPath, permanentVideoPath);
+      console.log(`📁 Final video saved to: ${permanentVideoPath}`);
 
-    // Save to database with local file path
-    const processingTime = Date.now() - startTime;
-    storyData.processingTime = processingTime;
-
+      // Save to database with local file path
+      const processingTime = Date.now() - startTime;
+      storyData.processingTime = processingTime;
       
       const animationRecord = await this.saveAnimationToDatabase(storyData, permanentVideoPath);
 
-      // Cleanup temp files
-    //   await this.cleanupTempFiles();
-
-      console.log(`\n🎉 Animation generation completed successfully!`);
+      console.log(`\n🎉 Country-aware animation generation completed successfully!`);
+      console.log(`🌍 Generated for: ${storyData.countryContext.primaryCountry}${storyData.countryContext.primaryCity ? ` (${storyData.countryContext.primaryCity})` : ''}`);
       console.log(`⏱️ Total processing time: ${(processingTime / 1000 / 60).toFixed(1)} minutes`);
       console.log(`📂 Final video path: ${permanentVideoPath}`);
       
@@ -1124,10 +1231,11 @@ class AnimationService {
         success: true,
         animationId: animationRecord._id,
         videoPath: permanentVideoPath,
-        videoUrl: permanentVideoPath, // For backward compatibility
+        videoUrl: permanentVideoPath,
         title: storyData.title,
         processingTime: processingTime,
-        sceneCount: storyData.scenes.length
+        sceneCount: storyData.scenes.length,
+        countryContext: storyData.countryContext
       };
 
     } catch (error) {
