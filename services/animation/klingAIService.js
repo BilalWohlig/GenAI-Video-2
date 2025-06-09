@@ -64,7 +64,7 @@ class KlingAIService {
       // Choose model based on mode
       const model = mode === 'pro' 
         ? 'kwaivgi/kling-v1.6-pro:03b02153924ef65cd57b7e561f3a4ed66db11c34218d2c70a8af198987edfa3d'
-        : 'kwaivgi/kling-v1.6-pro:03b02153924ef65cd57b7e561f3a4ed66db11c34218d2c70a8af198987edfa3d'; // Using pro for both for now
+        : 'kwaivgi/kling-v1.6-standard';
 
       const input = {
         prompt: prompt,
@@ -80,39 +80,6 @@ class KlingAIService {
       const output = await this.replicate.run(model, { input });
       const replicateVideoUrl = output.url().href
       
-      // Handle ReadableStream output
-    //   let videoUrl;
-    //   if (output && typeof output === 'object' && output.constructor.name === 'ReadableStream') {
-    //     // Convert ReadableStream to URL
-    //     const chunks = [];
-    //     const reader = output.getReader();
-        
-    //     try {
-    //       while (true) {
-    //         const { done, value } = await reader.read();
-    //         if (done) break;
-    //         chunks.push(value);
-    //       }
-          
-    //       // Combine chunks to get the final URL
-    //       const result = new TextDecoder().decode(Buffer.concat(chunks));
-    //       videoUrl = result.trim();
-          
-    //     } finally {
-    //       reader.releaseLock();
-    //     }
-    //   } else if (typeof output === 'string') {
-    //     videoUrl = output;
-    //   } else if (Array.isArray(output) && output.length > 0) {
-    //     videoUrl = output[0];
-    //   } else {
-    //     throw new Error('Unexpected output format from Replicate');
-    //   }
-
-    //   if (!videoUrl || !videoUrl.startsWith('http')) {
-    //     throw new Error('Invalid video URL received from Replicate');
-    //   }
-
       console.log('✅ Replicate video generation successful!');
       console.log(`   Video URL: ${replicateVideoUrl}`);
 

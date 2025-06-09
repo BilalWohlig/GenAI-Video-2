@@ -382,6 +382,7 @@ class AnimationService {
         }
       }
       
+      console.log("StoryData", storyData.characters);
       console.log("StoryData", storyData.scenes);
       
       console.log(`✅ Country-aware news story generated: "${storyData.title}" with ${storyData.characters.length} characters`);
@@ -469,7 +470,7 @@ class AnimationService {
     return characterAssets;
   }
 
-  // UPDATED: Phase 3: Scene Generation with Country Context
+  // UPDATED: Phase 3: Scene Generation with Country Context, Minimal Text, and Detailed Descriptions
   async generateSceneImages(scenes, characterAssets, countryContext) {
     const sceneImages = [];
 
@@ -484,6 +485,8 @@ class AnimationService {
         const referenceImages = [];
         let enhancedPrompt = sanitizedDescription;
 
+        // Build detailed character positioning and actions
+        let characterDetails = "";
         if (scene.characters && scene.characters.length > 0) {
           // Build character reference mapping
           let characterReferences = [];
@@ -492,6 +495,9 @@ class AnimationService {
             if (characterAssets[charName] && characterAssets[charName].master) {
               referenceImages.push(characterAssets[charName].master);
               characterReferences.push(`${charName}(image ${index + 1})`);
+              
+              // Add detailed character positioning based on scene type
+              characterDetails += this.generateDetailedCharacterDescription(charName, index + 1, scene, countryContext);
             }
           });
 
@@ -510,12 +516,35 @@ class AnimationService {
           }
         }
 
-        // Build complete realistic scene prompt with country context
+        // Generate detailed environmental description
+        const environmentalDetails = this.generateDetailedEnvironmentalDescription(scene, countryContext);
+        
+        // Generate detailed lighting and mood specifications
+        const lightingDetails = this.generateDetailedLightingDescription(scene, countryContext);
+        
+        // Generate detailed composition and camera specifications
+        const compositionDetails = this.generateDetailedCompositionDescription(scene, countryContext);
+
+        // Build complete realistic scene prompt with extremely detailed descriptions
         let fullScenePrompt = `
-        Realistic news scene in Disney/Pixar 3D animation style: ${enhancedPrompt}
-        Location: ${scene.location}
-        Mood: ${scene.mood}
-        Camera angle: ${scene.cameraAngle}
+        HIGHLY DETAILED Disney/Pixar 3D animation scene: ${enhancedPrompt}
+        
+        SCENE LOCATION SPECIFICATIONS:
+        Primary Location: ${scene.location}
+        Scene Mood: ${scene.mood}
+        Camera Position: ${scene.cameraAngle}
+        
+        DETAILED CHARACTER POSITIONING & ACTIONS:
+        ${characterDetails}
+        
+        DETAILED ENVIRONMENTAL DESCRIPTION:
+        ${environmentalDetails}
+        
+        DETAILED LIGHTING & ATMOSPHERE:
+        ${lightingDetails}
+        
+        DETAILED COMPOSITION & FRAMING:
+        ${compositionDetails}
         
         COUNTRY-SPECIFIC AUTHENTICITY FOR ${countryContext.primaryCountry}:
         🏛️ Architecture: ${countryContext.architecturalStyle}
@@ -523,45 +552,91 @@ class AnimationService {
         🗣️ Signage/Text: ${countryContext.languageContext}
         👥 Background People: ${countryContext.demographicNotes}
         
-        Ensure the scene authentically represents ${countryContext.primaryCountry}:
-        - Buildings and infrastructure should match ${countryContext.architecturalStyle}
-        - Street scenes should include typical ${countryContext.primaryCountry} elements (vehicles, street furniture, etc.)
-        - Background characters should reflect local demographics
-        - Signage and text should be in appropriate language(s)
-        - Environmental details should be culturally accurate
-        - Weather and lighting appropriate for the region
+        TEXT CONTENT RESTRICTIONS - CRITICAL:
+        📝 MINIMIZE ALL TEXTUAL CONTENT in the scene:
         
-        High quality 3D rendering, professional lighting, detailed realistic environment, 
-        Disney/Pixar animation visual quality, vibrant but realistic colors, engaging composition.
+        ✅ ALLOWED TEXT (keep minimal and blurred):
+        - Basic building names (office buildings, hospitals, schools)
+        - Essential traffic signs (STOP, street names)
+        - Basic directional signs (EXIT, ENTRANCE)
+        - Generic storefront names (PHARMACY, CAFE, BANK)
         
-        IMPORTANT CONTENT GUIDELINES:
-        - Keep everything REALISTIC and NEWS-APPROPRIATE
+        ❌ AVOID COMPLETELY:
+        - News headlines or ticker text
+        - Newspaper text or readable content
+        - Advertising banners or promotional signs
+        - Protest signs or placards with text
+        - TV screens with text content
+        - Social media interfaces or screens
+        - Detailed poster text or flyers
+        - Magazine covers with text
+        - Digital displays with news content
+        - Billboard advertisements with text
+        - Street banners with promotional messages
+        - Any readable text that could distract from the scene
+        
+        🎯 TEXT RENDERING GUIDELINES:
+        - Keep all text very small, blurred, or out of focus
+        - Use generic, non-readable text styling
+        - Focus on shapes and colors rather than readable content
+        - Make any background text appear as visual texture, not readable information
+        - Prioritize clean, uncluttered visual composition
+        - Text should blend into the background as environmental detail
+        
+        TECHNICAL RENDERING SPECIFICATIONS:
+        - Ultra-high quality Disney/Pixar 3D rendering
+        - Professional cinematic lighting with realistic shadows and reflections
+        - Photorealistic materials and textures
+        - Advanced depth of field and bokeh effects
+        - Vibrant but naturalistic color grading
+        - Sharp focus on main subjects with appropriate background blur
+        - Film-quality composition and framing
+        - Professional broadcast-ready visual quality
+        
+        CULTURAL AUTHENTICITY REQUIREMENTS:
+        - Buildings and infrastructure must match ${countryContext.architecturalStyle}
+        - Street scenes include typical ${countryContext.primaryCountry} elements (vehicles, street furniture, signage styles)
+        - Background characters reflect authentic local demographics: ${countryContext.demographicNotes}
+        - Environmental details culturally accurate for ${countryContext.primaryCountry}
+        - Weather and lighting appropriate for the geographical region
+        - Local architectural details and urban planning styles
+        - Authentic vehicle models and license plate styles for the region
+        - Appropriate flora and landscape elements for the climate
+        
+        CONTENT SAFETY & PROFESSIONALISM:
+        - Maintain REALISTIC and NEWS-APPROPRIATE content
         - Focus on aftermath, response, and community impact rather than violent actions
-        - Show emergency responders, investigators, and community support
+        - Show professional emergency responders, investigators, and community support
         - Avoid graphic content, violence, or disturbing imagery
-        - Professional, family-friendly presentation suitable for news broadcast
-        - No weapons, blood, or explicit violence - focus on response and recovery
-        - Emphasize human resilience, community support, and professional response
+        - Family-friendly presentation suitable for broadcast news
+        - No weapons, blood, or explicit violence - emphasize response and recovery
+        - Highlight human resilience, community support, and professional response
+        - Clean visual environment without distracting textual elements
         
-        REALISTIC REQUIREMENTS:
+        CHARACTER CONSISTENCY REQUIREMENTS:
+        - Maintain exact character designs, colors, and physical features from reference images
+        - Keep consistent facial features, hair, clothing, and body proportions
+        - Ensure professional, realistic appearance appropriate for ${countryContext.primaryCountry} context
+        - Characters should maintain their established visual identity across all scenes
+        - Preserve character personality through body language and positioning
+        
+        FINAL QUALITY STANDARDS:
         - No magical elements, fantasy creatures, or fictional aspects
-        - Professional, real-world setting appropriate for news content in ${countryContext.primaryCountry}
-        - Realistic human characters in appropriate professional attire for ${countryContext.primaryCountry}
-        - Modern, contemporary ${countryContext.primaryCountry} environments (offices, laboratories, city streets, etc.)
+        - Professional, real-world setting appropriate for news content
+        - Modern, contemporary ${countryContext.primaryCountry} environments
         - Maintain journalistic accuracy and cultural authenticity
-        
-        Maintain character consistency with the reference images. Keep the exact same character designs, 
-        colors, and physical features from the reference images. Ensure professional, realistic appearance
-        appropriate for ${countryContext.primaryCountry} context.`;
+        - Minimize readable text to maintain focus on visual narrative
+        - Achieve broadcast-quality, professional animation standards`;
 
         let sceneImagePath;
 
         if (referenceImages.length > 0) {
-          // Generate scene with character references
-          console.log(`   Using ${referenceImages.length} character reference images for ${countryContext.primaryCountry}-authentic scene`);
+          // Generate scene with character references and detailed descriptions
+          console.log(`   Using ${referenceImages.length} character reference images with detailed scene specifications for ${countryContext.primaryCountry}-authentic scene`);
           sceneImagePath = await this.generateImageWithReference(referenceImages, fullScenePrompt);
         } else {
-          // Generate scene without character references
+          // Generate scene without character references but with detailed descriptions
+          console.log(`   Generating detailed scene without character references for ${countryContext.primaryCountry}-authentic environment`);
           sceneImagePath = await this.generateImage(fullScenePrompt);
         }
         
@@ -575,7 +650,8 @@ class AnimationService {
           sceneType: scene.sceneType || 'standard',
           charactersUsed: scene.characters || [],
           contentModified: wasModified,
-          countryContext: countryContext
+          countryContext: countryContext,
+          detailedPromptUsed: true // Flag to indicate detailed prompting was used
         });
 
         // Copy to permanent scene directory
@@ -583,66 +659,304 @@ class AnimationService {
         await fs.copyFile(sceneImagePath, permanentPath);
 
         if (wasModified) {
-          console.log(`✅ Content-safe ${countryContext.primaryCountry}-authentic scene ${scene.sceneNumber} generated (content modified for safety)`);
+          console.log(`✅ Content-safe ${countryContext.primaryCountry}-authentic detailed scene ${scene.sceneNumber} generated with minimal text (content modified for safety)`);
         } else {
-          console.log(`✅ ${countryContext.primaryCountry}-authentic scene ${scene.sceneNumber} generated with ${scene.characters?.length || 0} character references`);
+          console.log(`✅ ${countryContext.primaryCountry}-authentic detailed scene ${scene.sceneNumber} generated with minimal text and ${scene.characters?.length || 0} character references`);
         }
 
       } catch (error) {
-        console.error(`Error generating scene ${scene.sceneNumber}:`, error);
-        throw new Error(`Failed to generate scene: ${scene.sceneNumber}`);
+        console.error(`Error generating detailed scene ${scene.sceneNumber}:`, error);
+        throw new Error(`Failed to generate detailed scene: ${scene.sceneNumber}`);
       }
     }
 
     return sceneImages;
   }
 
-  // Phase 4: Video Generation with Kling AI (unchanged)
+  // Helper method to generate detailed family-friendly character descriptions
+  generateDetailedCharacterDescription(charName, imageIndex, scene, countryContext) {
+    const sceneTypePositioning = {
+      'action': {
+        primary: 'positioned dynamically in the center-left of frame, body slightly turned towards camera, confident coordination stance with feet shoulder-width apart',
+        secondary: 'positioned in background right, observing the coordination activities, hands at sides, professional supportive posture'
+      },
+      'dialogue': {
+        primary: 'positioned center frame, facing slightly left, direct eye contact towards camera, engaged positive expression, hands relaxed at sides',
+        secondary: 'positioned right side of frame, angled towards primary character, attentive listening posture, respectful collaborative distance'
+      },
+      'landscape': {
+        primary: 'positioned in lower third of frame, establishing human scale against architecture, looking towards positive coordination activities',
+        secondary: 'positioned further back, integrated into environmental context, contributing to positive scene composition'
+      },
+      'emotional': {
+        primary: 'positioned center frame, close-up composition, expressive face clearly visible, positive emotion conveyed through professional posture',
+        secondary: 'positioned in soft focus background, supportive presence, complementary positive body language'
+      },
+      'standard': {
+        primary: 'positioned center-right of frame, professional coordination stance, clear visibility of face and upper body, appropriate for positive community context',
+        secondary: 'positioned to left side, balanced composition, maintaining positive professional appearance'
+      }
+    };
+
+    const positioning = sceneTypePositioning[scene.sceneType] || sceneTypePositioning['standard'];
+    const isPrimary = imageIndex === 1;
+    const charPosition = isPrimary ? positioning.primary : positioning.secondary;
+
+    // Sanitize mood for family-friendly content
+    const safeMood = scene.mood
+      .replace(/serious|urgent|concerned/gi, 'focused')
+      .replace(/crisis|emergency/gi, 'coordination')
+      .replace(/investigation/gi, 'planning');
+
+    return `
+    CHARACTER ${imageIndex} - ${charName}(image ${imageIndex}):
+    - POSITIONING: ${charPosition}
+    - CULTURAL CONTEXT: Appearance and attire authentic to ${countryContext.primaryCountry} positive professional standards
+    - CLOTHING: Appropriate for ${countryContext.primaryCountry} ${safeMood} coordination setting, matching local professional dress codes
+    - EXPRESSION: ${safeMood} expression appropriate for positive community context, conveying ${scene.sceneType} coordination emotion
+    - BODY LANGUAGE: Professional, positive coordination posture with hands clearly visible and empty of objects
+    - ACTIVITY: Engaged in constructive coordination and positive professional activities
+    - LIGHTING: Character lit with warm professional lighting, clear positive facial features, no harsh shadows
+    - DEPTH: ${isPrimary ? 'Primary focus with sharp positive detail' : 'Secondary depth with positive background integration'}
+    - CULTURAL DETAILS: Authentic ${countryContext.primaryCountry} demographic representation in facial features and positive styling
+    - INTERACTION: All interactions appear constructive, supportive, and professionally collaborative
+    `;
+  }
+
+  // Helper method to generate detailed family-friendly environmental descriptions
+  generateDetailedEnvironmentalDescription(scene, countryContext) {
+    const locationTypes = {
+      'office': `Modern ${countryContext.primaryCountry} office environment with welcoming local architectural details, contemporary furniture matching regional business culture, pleasant lighting fixtures, clean organized design reflecting local corporate aesthetics, appropriate window views of ${countryContext.primaryCountry} positive cityscape with coordination activities`,
+      
+      'street': `Pleasant ${countryContext.primaryCountry} street scene with beautiful local architecture: ${countryContext.architecturalStyle}, well-maintained vehicles with regional characteristics, attractive street furniture matching local municipal standards, pedestrian infrastructure typical of ${countryContext.primaryCountry} positive urban planning, pleasant weather conditions for the region`,
+      
+      'government': `Professional ${countryContext.primaryCountry} government building interior/exterior featuring impressive national architectural style, formal institutional design elements, appropriate national symbols and architectural details, positive civic environment matching local government building standards with coordination activities`,
+      
+      'residential': `Pleasant ${countryContext.primaryCountry} residential area with beautiful local housing architecture, regional landscape elements, appropriate attractive flora for the climate, neighborhood characteristics matching local suburban/urban development patterns with positive community coordination`,
+      
+      'hospital': `Professional ${countryContext.primaryCountry} medical facility with modern welcoming healthcare environment, clean positive clinical design, appropriate medical equipment visible but not prominent, professional healthcare setting matching local medical infrastructure standards with coordination activities`,
+      
+      'school': `Educational facility in ${countryContext.primaryCountry} with impressive local school architecture, positive educational environment appropriate for the region, modern learning facilities matching local educational infrastructure standards with coordination activities`
+    };
+
+    // Determine location type from scene location
+    let locationType = 'office'; // default
+    const location = scene.location.toLowerCase();
+    if (location.includes('street') || location.includes('road') || location.includes('plaza')) locationType = 'street';
+    else if (location.includes('government') || location.includes('capitol') || location.includes('ministry')) locationType = 'government';
+    else if (location.includes('home') || location.includes('house') || location.includes('residential')) locationType = 'residential';
+    else if (location.includes('hospital') || location.includes('medical') || location.includes('clinic')) locationType = 'hospital';
+    else if (location.includes('school') || location.includes('university') || location.includes('campus')) locationType = 'school';
+
+    const baseEnvironment = locationTypes[locationType] || locationTypes['office'];
+
+    return `
+    FAMILY-FRIENDLY ENVIRONMENTAL SPECIFICATIONS:
+    - PRIMARY SETTING: ${baseEnvironment}
+    - ARCHITECTURAL DETAILS: Beautiful ${countryContext.architecturalStyle} with attractive construction materials and positive design elements
+    - BACKGROUND ELEMENTS: 3-5 carefully placed positive environmental props that enhance the coordination scene without clutter (attractive furniture, coordination equipment, pleasant architectural features)
+    - SCALE & PROPORTION: Realistic human scale relative to welcoming environment, proper perspective and positive depth
+    - CULTURAL AUTHENTICITY: All environmental elements reflect positive ${countryContext.primaryCountry} design standards and cultural preferences
+    - CLEANLINESS: Professional, well-maintained, welcoming environment appropriate for positive community coordination
+    - DEPTH LAYERS: Foreground (2-3 positive elements), middle ground (main coordination area), background (supporting positive environmental context)
+    - MATERIAL QUALITY: Attractive realistic textures and materials - glass, metal, wood, concrete, fabric - all rendered with appealing photorealistic quality
+    - ATMOSPHERIC PERSPECTIVE: Positive depth cues with background elements appearing pleasant and inviting
+    - REGIONAL FLORA: If outdoor scene, include beautiful appropriate vegetation and landscape elements for ${countryContext.primaryCountry} climate
+    - ACTIVITY CONTEXT: All environmental elements suggest positive coordination, planning, and community collaboration activities
+    `;
+  }
+
+  // Helper method to generate detailed family-friendly lighting descriptions
+  generateDetailedLightingDescription(scene, countryContext) {
+    const moodLighting = {
+      'serious': 'Professional warm lighting with balanced contrast, maintaining clear positive visibility while conveying focus through welcoming directional lighting',
+      'urgent': 'Balanced contrast with pleasant color temperature, professional coordination lighting that conveys productivity without being dramatic, clean and clear positive illumination',
+      'hopeful': 'Warm, balanced lighting with soft shadows, optimistic color temperature leaning warm, professional quality with uplifting atmospheric feel',
+      'concerned': 'Warm professional lighting with controlled contrast, maintaining positive standards while conveying focus through pleasant lighting direction',
+      'informative': 'Clean, pleasant coordination lighting optimized for clarity and positive information delivery, minimal shadows, crisp and welcoming illumination',
+      'professional': 'Standard welcoming lighting setup with proper key, fill, and background lighting, pleasant color temperature and positive contrast ratios',
+      'focused': 'Concentrated warm lighting emphasizing positive coordination activities with pleasant atmospheric quality'
+    };
+
+    const timeOfDay = this.determineTimeOfDay(scene);
+    const weatherConditions = this.determineWeatherConditions(scene, countryContext);
+
+    // Sanitize mood for family-friendly lighting
+    const safeMood = scene.mood
+      .replace(/serious|urgent|concerned/gi, 'focused')
+      .replace(/crisis|emergency/gi, 'coordination')
+      .replace(/investigation/gi, 'planning');
+
+    return `
+    POSITIVE LIGHTING & ATMOSPHERE SPECIFICATIONS:
+    - PRIMARY LIGHTING: ${moodLighting[safeMood] || moodLighting['professional']}
+    - TIME OF DAY: ${timeOfDay.description} with appropriate pleasant natural lighting conditions
+    - WEATHER: ${weatherConditions.description} affecting ambient lighting and positive atmosphere
+    - COLOR TEMPERATURE: ${timeOfDay.colorTemp} maintaining pleasant natural appearance for ${countryContext.primaryCountry} geographical location
+    - SHADOW QUALITY: Soft, appealing shadows with proper depth and direction, avoiding harsh or distracting shadow patterns
+    - AMBIENT OCCLUSION: Subtle environmental shadowing that enhances depth and positive realism without darkening the scene
+    - REFLECTION QUALITY: Appropriate pleasant reflections on glass, metal, and polished surfaces maintaining welcoming photorealistic quality
+    - ATMOSPHERIC EFFECTS: ${weatherConditions.atmospherics} contributing to positive environmental authenticity
+    - CONTRAST RATIO: Pleasant standards maintaining detail in both highlights and shadows with positive energy
+    - HIGHLIGHT MANAGEMENT: Controlled highlights preventing overexposure while maintaining attractive material authenticity
+    - BACKGROUND LIGHTING: Graduated pleasant lighting that supports positive depth perception and welcoming environmental integration
+    - REGIONAL LIGHTING: Appropriate for ${countryContext.primaryCountry} geographical latitude and typical pleasant weather patterns
+    - MOOD ENHANCEMENT: Lighting specifically designed to create positive, welcoming, and constructive atmosphere for coordination activities
+    `;
+  }
+
+  // Helper method to generate detailed family-friendly composition descriptions
+  generateDetailedCompositionDescription(scene, countryContext) {
+    const cameraAngles = {
+      'close-up': 'Welcoming framing focusing on positive character expressions and emotions, pleasant depth of field highlighting subjects in positive environment',
+      'medium shot': 'Balanced composition showing characters from waist up, optimal for positive dialogue and character coordination interaction',
+      'wide shot': 'Pleasant establishing composition showing full environment and positive character context, appropriate for location and coordination establishment',
+      'over-the-shoulder': 'Dynamic composition providing viewer perspective and positive character connection, professional coordination-style framing',
+      'low angle': 'Slight upward angle conveying positive authority and importance, maintaining professional community coordination standards',
+      'high angle': 'Elevated perspective providing comprehensive positive view while maintaining subject dignity and professional presentation',
+      'eye level': 'Standard professional coordination framing at natural eye level, optimal for viewer connection and positive information delivery'
+    };
+
+    const angle = scene.cameraAngle.toLowerCase();
+    let cameraSpec = cameraAngles['eye level']; // default
+    
+    Object.keys(cameraAngles).forEach(key => {
+      if (angle.includes(key.replace('-', ' ')) || angle.includes(key.replace(' ', ''))) {
+        cameraSpec = cameraAngles[key];
+      }
+    });
+
+    return `
+    POSITIVE COMPOSITION & FRAMING SPECIFICATIONS:
+    - CAMERA ANGLE: ${cameraSpec}
+    - ASPECT RATIO: 16:9 professional format optimized for positive community coordination presentation
+    - RULE OF THIRDS: Strategic placement of key elements along compositional grid lines for welcoming visual balance
+    - DEPTH OF FIELD: Appropriate focus zones - sharp foreground subjects with controlled pleasant background focus based on coordination scene requirements
+    - LEADING LINES: Environmental elements that guide viewer attention to primary coordination subjects without distraction
+    - VISUAL BALANCE: Harmonious distribution of positive visual weight across the frame, avoiding cluttered or unbalanced compositions
+    - HEADROOM: Appropriate pleasant space above characters maintaining professional welcoming framing standards
+    - BREATHING ROOM: Adequate space around subjects preventing cramped or claustrophobic framing, promoting positive energy
+    - BACKGROUND INTEGRATION: Background elements support and positively complement primary coordination subjects
+    - CULTURAL FRAMING: Composition style appropriate for ${countryContext.primaryCountry} positive community coordination standards
+    - MOVEMENT SPACE: If applicable, appropriate directional space for positive implied movement or coordination eye lines
+    - SYMMETRY/ASYMMETRY: Balanced compositional approach appropriate for positive community content and coordination scene type
+    - FRAME STABILITY: Solid, stable composition suitable for professional coordination without distracting tilt or unusual angles
+    - VISUAL HIERARCHY: Clear primary, secondary, and tertiary elements guiding viewer attention through the positive coordination scene effectively
+    - POSITIVE ENERGY: Composition specifically designed to convey collaboration, teamwork, and constructive community activities
+    `;
+  }
+
+  // Helper method to determine time of day from scene context
+  determineTimeOfDay(scene) {
+    const description = scene.description.toLowerCase();
+    
+    if (description.includes('morning') || description.includes('dawn') || description.includes('sunrise')) {
+      return {
+        description: 'Morning (8:00-11:00 AM)',
+        colorTemp: '5600K natural daylight with warm morning undertones'
+      };
+    } else if (description.includes('afternoon') || description.includes('noon') || description.includes('midday')) {
+      return {
+        description: 'Midday (11:00 AM-2:00 PM)',
+        colorTemp: '6500K bright daylight with neutral color balance'
+      };
+    } else if (description.includes('evening') || description.includes('sunset') || description.includes('dusk')) {
+      return {
+        description: 'Evening (5:00-7:00 PM)',
+        colorTemp: '3200K warm evening light with golden undertones'
+      };
+    } else if (description.includes('night') || description.includes('nighttime')) {
+      return {
+        description: 'Evening/Night (7:00-9:00 PM)',
+        colorTemp: '3000K warm artificial lighting with cool ambient shadows'
+      };
+    } else {
+      return {
+        description: 'Professional indoor lighting (business hours)',
+        colorTemp: '4000K balanced artificial lighting with natural undertones'
+      };
+    }
+  }
+
+  // Helper method to determine weather conditions
+  determineWeatherConditions(scene, countryContext) {
+    const description = scene.description.toLowerCase();
+    const mood = scene.mood.toLowerCase();
+    
+    if (description.includes('rain') || description.includes('storm') || mood.includes('gloomy')) {
+      return {
+        description: 'Overcast with light atmospheric haze',
+        atmospherics: 'Soft, diffused lighting with increased atmospheric perspective and subtle moisture in air'
+      };
+    } else if (description.includes('sun') || description.includes('bright') || mood.includes('optimistic')) {
+      return {
+        description: 'Clear, bright conditions',
+        atmospherics: 'Crisp, clear atmosphere with sharp shadows and vibrant colors'
+      };
+    } else if (description.includes('fog') || description.includes('mist')) {
+      return {
+        description: 'Light atmospheric haze',
+        atmospherics: 'Soft, diffused lighting with reduced visibility in background layers'
+      };
+    } else {
+      return {
+        description: 'Typical weather conditions for the region',
+        atmospherics: `Standard atmospheric conditions appropriate for ${countryContext.primaryCountry} geographical location and season`
+      };
+    }
+  }
+
+  // Phase 4: Video Generation with Enhanced Content Safety
   async generateSceneVideos(sceneImages) {
     const sceneVideos = [];
 
     for (const scene of sceneImages) {
       try {
-        console.log(`🎥 Generating video for scene ${scene.sceneNumber}`);
+        console.log(`🎥 Generating family-friendly video for scene ${scene.sceneNumber}`);
 
-        // Generate motion description using GPT-4 with structured response
-        const motionSystemPrompt = `You are a professional news animation director. Create subtle, family-friendly motion descriptions for video generation that avoid both fast movements and any content that could be flagged as sensitive. Focus on gentle, professional movements suitable for broadcast news.`;
+        // Generate motion description using GPT-4 with enhanced safety focus
+        const motionSystemPrompt = `You are a family-friendly animation director creating gentle, positive motion descriptions for Disney-style video generation. Focus exclusively on calm, professional, constructive movements suitable for all audiences. Emphasize coordination, cooperation, and positive civic activities.`;
         
-        const motionUserPrompt = `Create subtle, content-safe motion for this news scene:
+        const motionUserPrompt = `Create gentle, family-friendly motion for this positive community scene:
         ${scene.description}
         
-        CRITICAL CONTENT SAFETY REQUIREMENTS:
-        - Focus on AFTERMATH, RESPONSE, and RECOVERY rather than violent actions
-        - Show emergency responders, investigators, community support
-        - Avoid any depiction of violence, weapons, or graphic content
-        - Emphasize human resilience and professional response
-        - Keep content family-friendly and broadcast-appropriate
+        CRITICAL FAMILY-FRIENDLY REQUIREMENTS:
+        - Focus ONLY on positive coordination, planning, and community cooperation
+        - Show professional collaboration and constructive teamwork
+        - Emphasize helpful assistance and positive civic engagement
+        - All activities should appear constructive and supportive
+        - Present all interactions as positive professional coordination
+        - Focus on community support and collaborative problem-solving
         
-        CRITICAL MOVEMENT REQUIREMENTS:
-        - ONLY subtle, slow movements to avoid video distortion
-        - NO fast movements, quick cuts, or rapid motion
-        - Focus on gentle, professional movements suitable for news
+        GENTLE MOVEMENT REQUIREMENTS:
+        - ONLY very subtle, slow, positive movements
+        - NO fast movements, sudden motions, or dramatic gestures
+        - Focus on calm, professional coordination activities
         - Scene type: ${scene.sceneType}
         - Scene duration: ${scene.duration} seconds
         
-        Content-safe subtle movements:
-        - Gentle head nods during interviews
-        - Slow camera pans over aftermath/debris (no violence)
-        - Emergency responders working calmly
-        - Officials discussing or investigating
-        - Community members supporting each other
-        - Gradual lighting changes or atmospheric effects
-        - Slow eye movements showing concern or focus
+        Family-friendly gentle movements:
+        - Gentle head nods during positive discussions
+        - Slow camera pans showing organized coordination activities
+        - Professional team members working together calmly
+        - Community leaders planning and coordinating constructively
+        - People collaborating and supporting each other positively
+        - Gradual lighting changes showing pleasant atmosphere
+        - Slow eye movements showing focus and positive concentration
+        - Gentle hand gestures indicating coordination and cooperation
+        - Calm walking movements showing purposeful coordination
+        - Pleasant expressions showing positive engagement
         
-        AVOID:
-        - Any violent actions or weapons
-        - Fast movements, running, chaos
-        - Graphic or disturbing content
+        COMPLETELY AVOID:
+        - Any rapid or sudden movements
+        - Any gestures that could appear confrontational
+        - Fast camera movements or dramatic motion
+        - Any motion that could appear tense or stressful
         - Quick hand gestures or rapid talking
-        - Fast camera movements or shaking
-        - Any motion that could cause distortion
+        - Any movement suggesting urgency or stress
+        - Motion that could cause visual distortion
         
-        Provide a concise, content-safe motion description (max 150 characters) focusing on subtle, professional, family-friendly movements.`;
+        Provide a positive, family-friendly motion description (max 150 characters) focusing on gentle, constructive, collaborative movements that emphasize community cooperation and positive coordination.`;
 
         const motionResponse = await this.openai.responses.parse({
           model: "gpt-4o-2024-08-06",
@@ -657,13 +971,13 @@ class AnimationService {
 
         let motionDescription = motionResponse.output_parsed.motionDescription;
 
-        // Enhance prompt for Disney quality
-        const enhancedPrompt = this.enhancePromptForDisney(motionDescription, scene);
+        // Enhance prompt for family-friendly Disney quality
+        const enhancedPrompt = this.enhancePromptForFamilyFriendlyDisney(motionDescription, scene);
 
         // Convert local image file to a format APIs can use
         const imageUrl = await this.convertLocalImageForKlingAI(scene.image);
 
-        // Generate video using Kling AI with fallback strategy
+        // Generate video using Kling AI with family-friendly fallback strategy
         const result = await KlingAI.generateVideoWithFallback(
           imageUrl,
           enhancedPrompt,
@@ -683,7 +997,7 @@ class AnimationService {
           klingTaskId: result.taskId
         });
 
-        console.log(`✅ Scene ${scene.sceneNumber} video generated successfully`);
+        console.log(`✅ Family-friendly scene ${scene.sceneNumber} video generated successfully`);
 
       } catch (error) {
         console.error(`Error generating video for scene ${scene.sceneNumber}:`, error);
@@ -694,38 +1008,51 @@ class AnimationService {
     return sceneVideos;
   }
 
-  // Enhanced Disney prompt generation (unchanged)
-  enhancePromptForDisney(basePrompt, sceneContext) {
-    const realisticNewsKeywords = [
+  // Enhanced family-friendly Disney prompt generation
+  enhancePromptForFamilyFriendlyDisney(basePrompt, sceneContext) {
+    const familyFriendlyKeywords = [
       'Disney/Pixar 3D animation visual style',
-      'realistic and professional',
-      'subtle movements only',
-      'high-quality rendering',
-      'professional lighting',
-      'news-appropriate content',
-      'gentle motion'
+      'positive and constructive',
+      'gentle movements only',
+      'high-quality family-friendly rendering',
+      'warm professional lighting',
+      'community cooperation appropriate content',
+      'calm coordination motion',
+      'collaborative teamwork focus',
+      'positive civic engagement',
+      'constructive professional activities'
     ];
 
-    const subtleCameraKeywords = {
-      'emotional': 'gentle close-up with minimal camera movement',
-      'action': 'slow, steady camera movement following the subject',
-      'landscape': 'very slow establishing shot with minimal pan',
-      'dialogue': 'static shot with subtle focus changes',
-      'standard': 'gentle, minimal camera movement'
+    const gentleCameraKeywords = {
+      'emotional': 'gentle close-up with minimal camera movement showing positive focus',
+      'action': 'slow, steady camera movement following positive coordination activities',
+      'landscape': 'very slow establishing shot showing pleasant community environment',
+      'dialogue': 'static shot with subtle focus on positive conversation',
+      'standard': 'gentle, minimal camera movement highlighting professional cooperation'
     };
 
     let enhanced = basePrompt;
-    enhanced += `, ${realisticNewsKeywords.join(', ')}`;
+    enhanced += `, ${familyFriendlyKeywords.join(', ')}`;
     
     if (sceneContext.mood) {
-      enhanced += `, professional ${sceneContext.mood} mood`;
+      const safeMood = sceneContext.mood.replace(/serious|urgent|concerned/gi, 'focused professional');
+      enhanced += `, positive ${safeMood} coordination atmosphere`;
     }
     
-    if (sceneContext.sceneType && subtleCameraKeywords[sceneContext.sceneType]) {
-      enhanced += `, ${subtleCameraKeywords[sceneContext.sceneType]}`;
+    if (sceneContext.sceneType && gentleCameraKeywords[sceneContext.sceneType]) {
+      enhanced += `, ${gentleCameraKeywords[sceneContext.sceneType]}`;
     }
 
-    enhanced += ', extremely subtle and slow movements to prevent distortion';
+    enhanced += ', extremely gentle and slow movements emphasizing positive cooperation and community coordination';
+
+    // Additional safety sanitization for video generation
+    enhanced = enhanced
+      .replace(/emergency|crisis|urgent/gi, 'coordination')
+      .replace(/investigation|probe|examine/gi, 'planning coordination')
+      .replace(/response|aftermath/gi, 'community coordination')
+      .replace(/concern|worry|anxiety/gi, 'focused attention')
+      .replace(/serious|grave|critical/gi, 'important coordination')
+      .replace(/impact|effect|consequence/gi, 'community coordination result');
 
     return enhanced;
   }
@@ -875,58 +1202,260 @@ class AnimationService {
     }
   }
 
-  // Content Safety Filter (unchanged)
+  // INTELLIGENT: Story-Aware Content Adaptation (preserves story integrity while ensuring visual safety)
   sanitizeSceneForContentPolicy(sceneDescription, sceneType) {
-    const sensitiveKeywords = {
-      'bomb': 'aftermath with debris and emergency response',
-      'explosion': 'aftermath scene with smoke and debris',
-      'shooting': 'emergency response and investigation scene',
-      'attack': 'aftermath with emergency services responding',
-      'terrorist': 'security and investigation response',
-      'violence': 'aftermath and community response',
-      'weapon': 'security investigation and evidence collection',
-      'murder': 'investigation scene with police presence',
-      'killed': 'memorial and community response',
-      'death': 'memorial service and community gathering',
-      'crash': 'aftermath scene with emergency responders',
-      'accident': 'emergency response and investigation',
-      'fire': 'firefighters responding and aftermath cleanup',
-      'disaster': 'rescue operations and community support',
-      'riot': 'peaceful community dialogue and cleanup efforts',
-      'protest': 'peaceful demonstration and community voices',
-      'clash': 'community leaders discussing solutions',
-      'pandemic': 'healthcare workers and community support',
-      'outbreak': 'medical professionals and prevention measures',
-      'emergency': 'first responders and community assistance'
-    };
-
-    let sanitizedDescription = sceneDescription.toLowerCase();
+    // Determine story type to apply appropriate visual adaptations
+    const storyType = this.detectStoryType(sceneDescription);
+    console.log("Story Type", storyType)
+    
+    let sanitizedDescription = sceneDescription;
     let wasModified = false;
 
-    for (const [sensitiveWord, safeAlternative] of Object.entries(sensitiveKeywords)) {
-      const regex = new RegExp(`\\b${sensitiveWord}\\b`, 'gi');
-      if (regex.test(sanitizedDescription)) {
-        sanitizedDescription = sanitizedDescription.replace(regex, safeAlternative);
-        wasModified = true;
-      }
+    // Apply story-type specific visual adaptations (keep narration intact)
+    switch (storyType) {
+      case 'crime':
+        ({ sanitizedDescription, wasModified } = this.adaptCrimeSceneVisuals(sceneDescription));
+        break;
+      case 'accident':
+        ({ sanitizedDescription, wasModified } = this.adaptAccidentSceneVisuals(sceneDescription));
+        break;
+      case 'conflict':
+        ({ sanitizedDescription, wasModified } = this.adaptConflictSceneVisuals(sceneDescription));
+        break;
+      case 'emergency':
+        ({ sanitizedDescription, wasModified } = this.adaptEmergencySceneVisuals(sceneDescription));
+        break;
+      case 'investigation':
+        ({ sanitizedDescription, wasModified } = this.adaptInvestigationSceneVisuals(sceneDescription));
+        break;
+      default:
+        // For general news, apply light sanitization only if needed
+        ({ sanitizedDescription, wasModified } = this.adaptGeneralSceneVisuals(sceneDescription));
+        break;
     }
 
     if (wasModified) {
-      sanitizedDescription = sanitizedDescription
-        .replace(/\b(hitting|striking|fighting|attacking|destroying)\b/gi, 'showing')
-        .replace(/\b(blood|gore|graphic)\b/gi, 'evidence')
-        .replace(/\b(screaming|crying|pain)\b/gi, 'emotional response')
-        .replace(/\b(injured|wounded|hurt)\b/gi, 'receiving medical care');
-    }
-
-    if (wasModified) {
-      console.log(`🛡️ Scene content sanitized for content policy compliance`);
+      console.log(`🎬 Scene visuals adapted for ${storyType} story while preserving narrative integrity`);
     }
 
     return {
       sanitizedDescription,
-      wasModified
+      wasModified,
+      storyType
     };
+  }
+
+  // Helper method to detect story type from scene description
+  detectStoryType(description) {
+    const lowerDesc = description.toLowerCase();
+    
+    if (lowerDesc.includes('crime') || lowerDesc.includes('murder') || lowerDesc.includes('robbery') || 
+        lowerDesc.includes('theft') || lowerDesc.includes('arrest') || lowerDesc.includes('suspect') ||
+        lowerDesc.includes('police') || lowerDesc.includes('investigation') || lowerDesc.includes('evidence')) {
+      return 'crime';
+    }
+    
+    if (lowerDesc.includes('accident') || lowerDesc.includes('crash') || lowerDesc.includes('collision') ||
+        lowerDesc.includes('emergency') || lowerDesc.includes('ambulance') || lowerDesc.includes('hospital')) {
+      return 'accident';
+    }
+    
+    if (lowerDesc.includes('protest') || lowerDesc.includes('riot') || lowerDesc.includes('clash') ||
+        lowerDesc.includes('demonstration') || lowerDesc.includes('conflict')) {
+      return 'conflict';
+    }
+    
+    if (lowerDesc.includes('fire') || lowerDesc.includes('disaster') || lowerDesc.includes('rescue') ||
+        lowerDesc.includes('evacuation') || lowerDesc.includes('emergency')) {
+      return 'emergency';
+    }
+    
+    if (lowerDesc.includes('investigation') || lowerDesc.includes('probe') || lowerDesc.includes('inquiry') ||
+        lowerDesc.includes('court') || lowerDesc.includes('trial') || lowerDesc.includes('hearing')) {
+      return 'investigation';
+    }
+    
+    return 'general';
+  }
+
+  // Adapt crime story visuals (show investigation/aftermath, not the crime itself)
+  adaptCrimeSceneVisuals(description) {
+    const crimeVisualAdaptations = {
+      // Replace direct crime depictions with investigation/aftermath
+      'murder scene': 'police investigation area with evidence markers',
+      'shooting': 'police investigation with officers documenting the scene',
+      'robbery in progress': 'police officers interviewing witnesses',
+      'break-in': 'security personnel examining the affected area',
+      'assault': 'medical personnel providing assistance',
+      'attack': 'emergency response team coordinating',
+      'violence': 'police officers taking statements from witnesses',
+      'stabbing': 'emergency medical response scene',
+      'gunshot': 'police investigation and evidence collection',
+      'weapon': 'police evidence collection team working',
+      'blood': 'forensic investigation team documenting evidence',
+      'victim': 'medical personnel providing care and assistance',
+      'perpetrator': 'police officer discussing the case',
+      'suspect being arrested': 'police officers in professional discussion',
+      'fight': 'police officers interviewing witnesses',
+      'threatening': 'police officers taking witness statements'
+    };
+
+    let adaptedDescription = description;
+    let wasModified = false;
+
+    // Apply visual adaptations while preserving story context
+    for (const [crimeVisual, safeVisual] of Object.entries(crimeVisualAdaptations)) {
+      const regex = new RegExp(crimeVisual, 'gi');
+      if (regex.test(adaptedDescription)) {
+        adaptedDescription = adaptedDescription.replace(regex, safeVisual);
+        wasModified = true;
+      }
+    }
+
+    // Focus on investigation and response rather than the crime action
+    adaptedDescription = adaptedDescription
+      .replace(/\b(committing|performing|executing)\s+(a\s+)?(crime|murder|robbery)\b/gi, 'investigating the reported incident')
+      .replace(/\b(during|while)\s+the\s+(attack|assault|crime)\b/gi, 'during the investigation')
+      .replace(/\b(scene\s+of\s+the\s+)(crime|murder|attack)\b/gi, 'investigation area')
+      .replace(/\b(criminal|perpetrator)\s+(escaping|fleeing)\b/gi, 'police coordinating response efforts');
+
+    return { sanitizedDescription: adaptedDescription, wasModified };
+  }
+
+  // Adapt accident story visuals (show response/aftermath, not the accident moment)
+  adaptAccidentSceneVisuals(description) {
+    const accidentVisualAdaptations = {
+      'car crash': 'emergency responders at the accident site',
+      'collision': 'traffic officials documenting the incident',
+      'vehicle accident': 'emergency medical team providing assistance',
+      'plane crash': 'emergency response coordination at the airport',
+      'train derailment': 'railway safety officials examining the area',
+      'explosion': 'emergency response team securing the area',
+      'fire': 'firefighters and emergency personnel at the scene',
+      'building collapse': 'rescue workers coordinating search efforts',
+      'injured victims': 'medical personnel providing emergency care',
+      'casualties': 'emergency medical response team',
+      'wreckage': 'investigation team examining the affected area',
+      'debris': 'cleanup crews working to clear the area'
+    };
+
+    let adaptedDescription = description;
+    let wasModified = false;
+
+    for (const [accidentVisual, safeVisual] of Object.entries(accidentVisualAdaptations)) {
+      const regex = new RegExp(accidentVisual, 'gi');
+      if (regex.test(adaptedDescription)) {
+        adaptedDescription = adaptedDescription.replace(regex, safeVisual);
+        wasModified = true;
+      }
+    }
+
+    return { sanitizedDescription: adaptedDescription, wasModified };
+  }
+
+  // Adapt conflict story visuals (show dialogue/peaceful resolution, not confrontation)
+  adaptConflictSceneVisuals(description) {
+    const conflictVisualAdaptations = {
+      'violent protest': 'peaceful demonstration with community leaders',
+      'riot': 'community dialogue session',
+      'clash between': 'meeting between representatives of',
+      'fighting': 'discussing and negotiating',
+      'confrontation': 'dialogue session',
+      'aggressive crowd': 'gathered community members',
+      'protesters throwing': 'protesters peacefully demonstrating',
+      'police in riot gear': 'police officers maintaining public safety',
+      'tear gas': 'crowd management measures',
+      'barricades': 'organized demonstration area'
+    };
+
+    let adaptedDescription = description;
+    let wasModified = false;
+
+    for (const [conflictVisual, safeVisual] of Object.entries(conflictVisualAdaptations)) {
+      const regex = new RegExp(conflictVisual, 'gi');
+      if (regex.test(adaptedDescription)) {
+        adaptedDescription = adaptedDescription.replace(regex, safeVisual);
+        wasModified = true;
+      }
+    }
+
+    return { sanitizedDescription: adaptedDescription, wasModified };
+  }
+
+  // Adapt emergency story visuals (show response/coordination, not the emergency itself)
+  adaptEmergencySceneVisuals(description) {
+    const emergencyVisualAdaptations = {
+      'building on fire': 'firefighters coordinating response at the building',
+      'people trapped': 'rescue workers organizing evacuation procedures',
+      'rescue operation': 'emergency response team coordination',
+      'evacuation': 'emergency personnel guiding people to safety',
+      'disaster zone': 'emergency response coordination area',
+      'emergency sirens': 'emergency vehicles positioned for response',
+      'panic': 'organized emergency response',
+      'chaos': 'coordinated emergency management'
+    };
+
+    let adaptedDescription = description;
+    let wasModified = false;
+
+    for (const [emergencyVisual, safeVisual] of Object.entries(emergencyVisualAdaptations)) {
+      const regex = new RegExp(emergencyVisual, 'gi');
+      if (regex.test(adaptedDescription)) {
+        adaptedDescription = adaptedDescription.replace(regex, safeVisual);
+        wasModified = true;
+      }
+    }
+
+    return { sanitizedDescription: adaptedDescription, wasModified };
+  }
+
+  // Adapt investigation story visuals (show professional procedures)
+  adaptInvestigationSceneVisuals(description) {
+    const investigationVisualAdaptations = {
+      'crime scene': 'investigation area with professional documentation',
+      'evidence collection': 'forensic team professional documentation',
+      'interrogation': 'professional interview session',
+      'suspect questioning': 'police interview room',
+      'witness testimony': 'formal statement session',
+      'court hearing': 'professional legal proceedings',
+      'trial': 'formal judicial session'
+    };
+
+    let adaptedDescription = description;
+    let wasModified = false;
+
+    for (const [investigationVisual, safeVisual] of Object.entries(investigationVisualAdaptations)) {
+      const regex = new RegExp(investigationVisual, 'gi');
+      if (regex.test(adaptedDescription)) {
+        adaptedDescription = adaptedDescription.replace(regex, safeVisual);
+        wasModified = true;
+      }
+    }
+
+    return { sanitizedDescription: adaptedDescription, wasModified };
+  }
+
+  // Light adaptations for general news (minimal changes)
+  adaptGeneralSceneVisuals(description) {
+    // Only apply very light modifications for clearly problematic visuals
+    const generalAdaptations = {
+      'graphic images': 'professional documentation',
+      'disturbing scenes': 'investigation area',
+      'violent imagery': 'response coordination'
+    };
+
+    let adaptedDescription = description;
+    let wasModified = false;
+
+    for (const [problematicVisual, safeVisual] of Object.entries(generalAdaptations)) {
+      const regex = new RegExp(problematicVisual, 'gi');
+      if (regex.test(adaptedDescription)) {
+        adaptedDescription = adaptedDescription.replace(regex, safeVisual);
+        wasModified = true;
+      }
+    }
+
+    return { sanitizedDescription: adaptedDescription, wasModified };
   }
 
   // Helper methods (unchanged)
@@ -1169,7 +1698,7 @@ class AnimationService {
     let finalVideoPath = null;
     
     try {
-      console.log('🎬 Starting country-aware Disney animation generation pipeline...');
+      console.log('🎬 Starting country-aware family-friendly Disney animation generation pipeline with detailed scenes, minimal text, and comprehensive content safety...');
       console.log(`📄 Article length: ${article.length} characters`);
       console.log(`🎭 Scenes to generate: ${sceneCount}`);
 
@@ -1185,10 +1714,10 @@ class AnimationService {
       const characterAssets = await this.generateCharacterAssets(storyData.characters, storyData.countryContext);
       console.log(`✅ Generated ${Object.keys(characterAssets).length} characters for ${storyData.countryContext.primaryCountry}`);
 
-      // Phase 3: Scene Generation with Country Context
-      console.log('\n🖼️ Phase 3: Generating country-authentic scene images...');
+      // Phase 3: Scene Generation with Country Context and Minimal Text
+      console.log('\n🖼️ Phase 3: Generating country-authentic detailed scene images with minimal text...');
       const sceneImages = await this.generateSceneImages(storyData.scenes, characterAssets, storyData.countryContext);
-      console.log(`✅ Generated ${sceneImages.length} ${storyData.countryContext.primaryCountry}-authentic scene images`);
+      console.log(`✅ Generated ${sceneImages.length} ${storyData.countryContext.primaryCountry}-authentic detailed scene images with minimal text`);
 
       // Phase 4: Video Generation
       console.log('\n🎥 Phase 4: Generating scene videos with Kling AI...');
@@ -1222,8 +1751,11 @@ class AnimationService {
       
       const animationRecord = await this.saveAnimationToDatabase(storyData, permanentVideoPath);
 
-      console.log(`\n🎉 Country-aware animation generation completed successfully!`);
+      console.log(`\n🎉 Country-aware family-friendly animation generation with detailed scenes and minimal text completed successfully!`);
       console.log(`🌍 Generated for: ${storyData.countryContext.primaryCountry}${storyData.countryContext.primaryCity ? ` (${storyData.countryContext.primaryCity})` : ''}`);
+      console.log(`📝 Text content minimized for clean visual composition`);
+      console.log(`🎬 Detailed family-friendly scene descriptions used for enhanced image control`);
+      console.log(`🛡️ All content optimized for comprehensive content safety compliance`);
       console.log(`⏱️ Total processing time: ${(processingTime / 1000 / 60).toFixed(1)} minutes`);
       console.log(`📂 Final video path: ${permanentVideoPath}`);
       
