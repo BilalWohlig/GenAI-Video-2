@@ -1,4 +1,4 @@
-// services/animation/animationService.js
+// services/animation/animationService.js - Enhanced with comprehensive mood integration
 const OpenAI = require('openai');
 const { toFile } = require('openai');
 const axios = require('axios');
@@ -38,7 +38,9 @@ const SceneSchema = z.object({
   cameraAngle: z.string(),
   narration: z.string(),
   duration: z.number(),
-  sceneType: z.enum(['action', 'dialogue', 'landscape', 'emotional', 'standard'])
+  sceneType: z.enum(['action', 'dialogue', 'landscape', 'emotional', 'standard']),
+  moodIntensity: z.number().min(1).max(10),
+  emotionalTone: z.string()
 });
 
 const StoryStructureSchema = z.object({
@@ -46,7 +48,8 @@ const StoryStructureSchema = z.object({
   theme: z.string(),
   characters: z.array(CharacterSchema),
   scenes: z.array(SceneSchema),
-  overallMood: z.string()
+  overallMood: z.string(),
+  moodProgression: z.array(z.string())
 });
 
 const MotionDescriptionSchema = z.object({
@@ -76,6 +79,218 @@ class AnimationService {
     
     this.workingDir = path.join(__dirname, '../../temp');
     this.ensureDirectoryExists();
+
+    // Define comprehensive mood configurations for every aspect of generation
+    this.moodConfigurations = {
+      'serious': {
+        lighting: {
+          colorTemp: '4200K neutral with slightly cooler undertones',
+          shadows: 'defined shadows with controlled contrast, professional depth',
+          atmosphere: 'focused, authoritative atmosphere with clear, direct lighting',
+          intensity: 'moderate to high contrast maintaining clarity'
+        },
+        composition: {
+          angles: 'eye-level or slightly low angle shots conveying authority and respect',
+          framing: 'structured, formal composition with balanced, symmetrical elements',
+          colors: 'neutral tones with cooler color palette, blues and grays',
+          depth: 'clear depth of field emphasizing subject importance'
+        },
+        motion: {
+          pace: 'deliberate, measured movements with purpose',
+          camera: 'steady, stable camera work with minimal, controlled movement',
+          character: 'purposeful gestures, formal posture, professional demeanor',
+          transitions: 'smooth, professional transitions without abrupt changes'
+        },
+        keywords: ['professional', 'focused', 'authoritative', 'formal', 'measured', 'respectful', 'dignified'],
+        voice: {
+          tone: 'clear, professional, authoritative but respectful',
+          pace: 'measured and deliberate',
+          emphasis: 'factual delivery with appropriate gravity'
+        }
+      },
+      'hopeful': {
+        lighting: {
+          colorTemp: '5600K warm daylight with golden undertones',
+          shadows: 'soft, gentle shadows with warm fill light creating optimism',
+          atmosphere: 'bright, optimistic lighting with warm, uplifting glow',
+          intensity: 'well-lit scenes with positive energy and warmth'
+        },
+        composition: {
+          angles: 'slightly elevated angles suggesting positivity and forward movement',
+          framing: 'open, spacious composition with breathing room and expansion',
+          colors: 'warm palette with golden, orange, and soft yellow tones',
+          depth: 'expansive depth of field showing broader, positive context'
+        },
+        motion: {
+          pace: 'smooth, flowing movements with gentle energy',
+          camera: 'gentle upward camera movements, slow pushes creating optimism',
+          character: 'open gestures, upright posture, genuine smiles, positive energy',
+          transitions: 'smooth, uplifting transitions with gentle momentum'
+        },
+        keywords: ['optimistic', 'bright', 'uplifting', 'warm', 'encouraging', 'positive', 'inspiring'],
+        voice: {
+          tone: 'warm, encouraging, optimistic with genuine positivity',
+          pace: 'steady with uplifting inflection',
+          emphasis: 'highlighting positive outcomes and progress'
+        }
+      },
+      'concerned': {
+        lighting: {
+          colorTemp: '3800K slightly cool with muted warmth',
+          shadows: 'subtle shadows creating depth without harshness or drama',
+          atmosphere: 'thoughtful, contemplative lighting with gentle, respectful contrast',
+          intensity: 'moderate lighting creating appropriate solemnity'
+        },
+        composition: {
+          angles: 'eye-level shots maintaining dignity and respect for subjects',
+          framing: 'intimate, focused composition showing care and attention',
+          colors: 'muted palette with subtle blue undertones, thoughtful grays',
+          depth: 'controlled depth emphasizing emotional connection'
+        },
+        motion: {
+          pace: 'careful, thoughtful movements showing consideration',
+          camera: 'slow, deliberate camera movements with respectful distance',
+          character: 'contemplative gestures, attentive posture, caring expressions',
+          transitions: 'gentle, respectful transitions maintaining emotional tone'
+        },
+        keywords: ['thoughtful', 'contemplative', 'careful', 'attentive', 'respectful', 'considerate', 'empathetic'],
+        voice: {
+          tone: 'caring, thoughtful, with appropriate concern',
+          pace: 'measured and considerate',
+          emphasis: 'expressing genuine care and understanding'
+        }
+      },
+      'urgent': {
+        lighting: {
+          colorTemp: '4500K bright, clear lighting with energy',
+          shadows: 'defined shadows creating dynamic contrast and movement',
+          atmosphere: 'energetic lighting with higher contrast and clarity',
+          intensity: 'bright, alert lighting conveying importance'
+        },
+        composition: {
+          angles: 'dynamic angles with energy while maintaining professionalism',
+          framing: 'focused framing creating attention and importance',
+          colors: 'vibrant but controlled palette with alert tones',
+          depth: 'sharp depth of field drawing immediate attention'
+        },
+        motion: {
+          pace: 'purposeful, efficient movements with controlled energy',
+          camera: 'steady but energetic camera work with focus',
+          character: 'alert posture, focused gestures, professional urgency',
+          transitions: 'crisp, efficient transitions maintaining momentum'
+        },
+        keywords: ['important', 'focused', 'alert', 'efficient', 'purposeful', 'timely', 'professional'],
+        voice: {
+          tone: 'clear, direct, conveying importance without alarm',
+          pace: 'slightly faster but controlled',
+          emphasis: 'highlighting key information and timely aspects'
+        }
+      },
+      'informative': {
+        lighting: {
+          colorTemp: '5000K neutral, clear lighting optimized for information delivery',
+          shadows: 'minimal shadows for clarity, even illumination',
+          atmosphere: 'clean, professional lighting enhancing comprehension',
+          intensity: 'consistent, bright lighting for optimal visibility'
+        },
+        composition: {
+          angles: 'straightforward, clear angles optimizing information presentation',
+          framing: 'balanced composition supporting clear communication',
+          colors: 'neutral, professional palette supporting content focus',
+          depth: 'appropriate depth maintaining subject clarity'
+        },
+        motion: {
+          pace: 'steady, clear movements supporting information delivery',
+          camera: 'stable, professional camera work enhancing comprehension',
+          character: 'clear, professional gestures and posture',
+          transitions: 'smooth, professional transitions maintaining flow'
+        },
+        keywords: ['clear', 'professional', 'informative', 'educational', 'accessible', 'comprehensive'],
+        voice: {
+          tone: 'clear, professional, educational',
+          pace: 'steady and comprehensible',
+          emphasis: 'highlighting key information and facts'
+        }
+      },
+      'celebratory': {
+        lighting: {
+          colorTemp: '5800K bright, joyful lighting with warm highlights',
+          shadows: 'soft shadows with abundant light creating joy',
+          atmosphere: 'festive, bright lighting with positive energy',
+          intensity: 'abundant, joyful lighting creating celebration'
+        },
+        composition: {
+          angles: 'uplifting angles celebrating positive moments',
+          framing: 'open, expansive composition showing celebration',
+          colors: 'vibrant, joyful palette with warm, celebratory tones',
+          depth: 'inclusive depth of field showing community and togetherness'
+        },
+        motion: {
+          pace: 'joyful, energetic movements with positive momentum',
+          camera: 'celebratory camera movements with gentle energy',
+          character: 'joyful expressions, celebratory gestures, positive energy',
+          transitions: 'uplifting transitions with celebratory feel'
+        },
+        keywords: ['joyful', 'celebratory', 'positive', 'energetic', 'uplifting', 'festive', 'triumphant'],
+        voice: {
+          tone: 'joyful, celebratory, with genuine happiness',
+          pace: 'energetic and uplifting',
+          emphasis: 'highlighting achievements and positive outcomes'
+        }
+      },
+      'reflective': {
+        lighting: {
+          colorTemp: '3200K warm, contemplative lighting',
+          shadows: 'gentle, thoughtful shadows creating depth and contemplation',
+          atmosphere: 'warm, introspective lighting encouraging reflection',
+          intensity: 'moderate, thoughtful lighting creating contemplative mood'
+        },
+        composition: {
+          angles: 'thoughtful angles encouraging contemplation',
+          framing: 'intimate composition supporting reflection',
+          colors: 'warm, muted palette encouraging introspection',
+          depth: 'contemplative depth creating thoughtful atmosphere'
+        },
+        motion: {
+          pace: 'slow, contemplative movements encouraging thought',
+          camera: 'gentle, reflective camera work',
+          character: 'thoughtful expressions, contemplative posture',
+          transitions: 'gentle, reflective transitions maintaining contemplative mood'
+        },
+        keywords: ['contemplative', 'thoughtful', 'introspective', 'reflective', 'peaceful', 'meditative'],
+        voice: {
+          tone: 'thoughtful, reflective, with gentle wisdom',
+          pace: 'slow and contemplative',
+          emphasis: 'encouraging reflection and understanding'
+        }
+      },
+      'professional': {
+        lighting: {
+          colorTemp: '4800K clean, professional lighting',
+          shadows: 'controlled shadows maintaining professionalism',
+          atmosphere: 'business-appropriate lighting conveying competence',
+          intensity: 'appropriate professional lighting standards'
+        },
+        composition: {
+          angles: 'professional angles conveying competence and reliability',
+          framing: 'business-appropriate composition maintaining professionalism',
+          colors: 'professional palette with business-appropriate tones',
+          depth: 'professional depth maintaining subject focus'
+        },
+        motion: {
+          pace: 'professional, competent movements',
+          camera: 'business-standard camera work',
+          character: 'professional demeanor, competent posture',
+          transitions: 'professional transitions maintaining business standards'
+        },
+        keywords: ['competent', 'reliable', 'professional', 'business-appropriate', 'skilled', 'experienced'],
+        voice: {
+          tone: 'professional, competent, reliable',
+          pace: 'business-appropriate and clear',
+          emphasis: 'highlighting expertise and competence'
+        }
+      }
+    };
   }
 
   async ensureDirectoryExists() {
@@ -89,6 +304,52 @@ class AnimationService {
     } catch (error) {
       console.error('Error creating directories:', error);
     }
+  }
+
+  // NEW METHOD: Get mood configuration
+  getMoodConfiguration(mood) {
+    const normalizedMood = mood.toLowerCase();
+    
+    // Direct match
+    if (this.moodConfigurations[normalizedMood]) {
+      return this.moodConfigurations[normalizedMood];
+    }
+    
+    // Partial matches and synonyms
+    const moodMappings = {
+      'grave': 'serious',
+      'somber': 'serious',
+      'formal': 'serious',
+      'positive': 'hopeful',
+      'optimistic': 'hopeful',
+      'upbeat': 'celebratory',
+      'worried': 'concerned',
+      'anxious': 'concerned',
+      'troubled': 'concerned',
+      'critical': 'urgent',
+      'important': 'urgent',
+      'emergency': 'urgent',
+      'educational': 'informative',
+      'explanatory': 'informative',
+      'factual': 'informative',
+      'joyful': 'celebratory',
+      'happy': 'celebratory',
+      'triumphant': 'celebratory',
+      'thoughtful': 'reflective',
+      'contemplative': 'reflective',
+      'business': 'professional',
+      'corporate': 'professional'
+    };
+    
+    for (const [synonym, baseMood] of Object.entries(moodMappings)) {
+      if (normalizedMood.includes(synonym)) {
+        return this.moodConfigurations[baseMood];
+      }
+    }
+    
+    // Default to professional if no match found
+    console.log(`⚠️ Unknown mood '${mood}', defaulting to 'professional'`);
+    return this.moodConfigurations['professional'];
   }
 
   // NEW METHOD: Detect country and cultural context from article
@@ -259,20 +520,44 @@ class AnimationService {
     }
   }
 
-  // UPDATED: Phase 1: Story Development with Country Context
+  // UPDATED: Phase 1: Story Development with Enhanced Mood Integration
   async generateStoryStructure(article, sceneCount) {
     // First, detect the country context
     const countryContext = await this.detectCountryContext(article);
 
-    const systemPrompt = `You are a professional news animator who creates Disney/Pixar-style 3D animated news stories. Your job is to transform real news articles into visually appealing animated content while maintaining journalistic accuracy and realism. Use Disney/Pixar's high-quality 3D animation style but keep the content factual, realistic, and true to the news story.
+    const systemPrompt = `You are a professional news animator who creates Disney/Pixar-style 3D animated news stories with sophisticated mood and emotional progression. Your job is to transform real news articles into visually appealing animated content while maintaining journalistic accuracy and creating appropriate emotional resonance through carefully crafted mood progression.
 
-    CRITICAL: When real public figures are mentioned in the article (politicians, celebrities, business leaders, etc.), you MUST include their actual names in the character descriptions. This helps create recognizable Disney/Pixar styled versions of real people.
+    CRITICAL MOOD REQUIREMENTS:
+    - Each scene must have a specific mood that matches the content and emotional progression
+    - Mood intensity should be rated 1-10 (1=very subtle, 10=very intense)
+    - Provide emotional tone that guides the visual and audio treatment
+    - Create mood progression that flows naturally through the story
+    - Consider cultural appropriateness for ${countryContext.primaryCountry}
+
+    AVAILABLE MOODS: serious, hopeful, concerned, urgent, informative, celebratory, reflective, professional
+
+    CRITICAL: When real public figures are mentioned in the article (politicians, celebrities, business leaders, etc.), you MUST include their actual names in the character descriptions.
 
     COUNTRY & CULTURAL CONTEXT: This story takes place primarily in ${countryContext.primaryCountry}${countryContext.primaryCity ? ` (${countryContext.primaryCity})` : ''}. Ensure all locations, general public characters, and cultural elements are authentic to this region.`;
     
-    const userPrompt = `Transform this news article into a realistic Disney/Pixar-style 3D animated news story with exactly ${sceneCount} scenes.
+    const userPrompt = `Transform this news article into a realistic Disney/Pixar-style 3D animated news story with exactly ${sceneCount} scenes, with sophisticated mood progression and emotional depth.
 
     Article: ${article}
+
+    ENHANCED MOOD REQUIREMENTS:
+    🎭 MOOD SPECIFICATION FOR EACH SCENE:
+    - Choose the most appropriate mood from: serious, hopeful, concerned, urgent, informative, celebratory, reflective, professional
+    - Provide moodIntensity (1-10 scale) based on content severity and emotional impact
+    - Specify emotionalTone (e.g., "respectfully concerned", "cautiously optimistic", "professionally urgent")
+    - Consider mood progression across scenes for emotional storytelling flow
+    - Ensure mood matches both content and cultural context of ${countryContext.primaryCountry}
+
+    MOOD PROGRESSION GUIDELINES:
+    📈 Create emotional arc through scenes:
+    - Opening: Establish context with appropriate introductory mood
+    - Development: Show progression through events with mood evolution
+    - Resolution: Conclude with mood that reflects outcomes and future implications
+    - Maintain cultural sensitivity for ${countryContext.primaryCountry} audience
 
     COUNTRY-SPECIFIC REQUIREMENTS:
     🌍 PRIMARY LOCATION: ${countryContext.primaryCountry}${countryContext.primaryCity ? ` (${countryContext.primaryCity})` : ''}
@@ -292,36 +577,8 @@ class AnimationService {
     - Characters should not have any artifact in their hands.
     - Avoid any Disney-like magical transformations, talking animals, or fantastical elements
 
-    COUNTRY-SPECIFIC CHARACTER & LOCATION GUIDELINES:
-    🏢 LOCATIONS: Use authentic ${countryContext.primaryCountry} settings:
-    - Government buildings should reflect ${countryContext.primaryCountry}'s architectural style
-    - Street scenes should show typical ${countryContext.primaryCountry} urban/suburban environments
-    - Office buildings, schools, hospitals should match local architectural standards
-    - Include appropriate signage and text in ${countryContext.languageContext}
-    - Backgrounds should reflect ${countryContext.culturalContext}
-
-    👥 GENERAL PUBLIC CHARACTERS (non-famous people): 
-    - Reflect authentic ${countryContext.primaryCountry} demographics: ${countryContext.demographicNotes}
-    - Clothing should be appropriate for ${countryContext.primaryCountry} professional/casual standards
-    - Facial features and appearances should be representative of ${countryContext.primaryCountry} population
-    - Names for unnamed characters should be culturally appropriate for ${countryContext.primaryCountry}
-    - Professional attire should match ${countryContext.primaryCountry} business culture
-
     CHARACTER NAMING GUIDELINES:
-    **CRITICAL**: If the article mentions real public figures by name, you MUST include their actual names in character descriptions. This includes:
-    - Politicians (presidents, ministers, senators, mayors, etc.)
-    - Business Leaders (CEOs, entrepreneurs, executives)
-    - Celebrities (actors, musicians, entertainers)
-    - Sports Personalities (athletes, coaches, team owners)
-    - Social Media Influencers / Content Creators
-    - Journalists and Media Personalities
-    - Religious or Spiritual Leaders
-    - Academics and Intellectuals (professors, researchers, scientists)
-    - Public Interest Litigants and Activists
-    - Models and Fashion Icons
-    - Any other recognizable public figures
-
-    For general public/unnamed characters (citizens, officials, workers), use culturally appropriate names for ${countryContext.primaryCountry} and ensure their appearance reflects local demographics.
+    **CRITICAL**: If the article mentions real public figures by name, you MUST include their actual names in character descriptions.
 
     **CHARACTER APPEARANCE GUIDELINES - VERY IMPORTANT**:
     - Characters must be described WITHOUT any objects, artifacts, or items in their hands
@@ -330,34 +587,15 @@ class AnimationService {
     - Focus only on their physical appearance, clothing, and facial features
     - This ensures clean character references that work across all scenes
     
-    **AVOID in character descriptions**:
-    ❌ "holding a microphone"
-    ❌ "with a phone in hand"
-    ❌ "carrying documents"
-    ❌ "holding a clipboard"
-    ❌ "with a pen"
-    ❌ "gripping a tool"
-    
-    **GOOD character descriptions**:
-    ✅ "professional business attire appropriate for ${countryContext.primaryCountry}, confident posture, hands at sides"
-    ✅ "formal suit matching ${countryContext.primaryCountry} government official style, authoritative presence, empty hands"
-    ✅ "casual professional clothing typical of ${countryContext.primaryCountry}, friendly expression, relaxed stance"
-
-    For example:
-    - If article mentions "Elon Musk", character description should be: "Elon Musk - Tech entrepreneur and CEO, rendered in Disney/Pixar 3D style with professional business attire, confident demeanor, hands at sides, no objects or artifacts"
-    - For general public: "Local ${countryContext.primaryCountry} Citizen - Middle-aged person with appearance typical of ${countryContext.primaryCountry} demographics, wearing ${countryContext.demographicNotes}, friendly expression, hands free of any objects"
-
     Create:
     - Realistic character descriptions with ACTUAL NAMES when public figures are mentioned
-    - General public characters that authentically represent ${countryContext.primaryCountry} demographics
-    - Character descriptions should include their real-world role/profession
-    - Disney/Pixar 3D styled versions of real people when applicable
     - **Characters MUST have empty hands and no artifacts/objects**
     - Factual scene descriptions based on actual events in the article
-    - Locations that are authentic to ${countryContext.primaryCountry}
-    - Professional, news-appropriate narration
-    - Scene types optimized for subtle, realistic movements
-    - Each scene should be 10 seconds duration for clarity, but for narration text, it should be as if each respective clip is 6-8s long`;
+    - DETAILED MOOD SPECIFICATIONS for each scene including mood type, intensity, and emotional tone
+    - Professional, news-appropriate narration that matches the specified mood
+    - Scene types optimized for the specified mood and emotional progression
+    - Each scene should be 10 seconds duration for clarity, but for narration text, it should be as if each respective clip is 6-8s long
+    - Overall mood progression that creates compelling emotional storytelling while remaining factual`;
 
     try {
       const response = await this.openai.responses.parse({
@@ -376,17 +614,35 @@ class AnimationService {
       // Add country context to story data
       storyData.countryContext = countryContext;
       
+      // Enhance character descriptions with names
       for(const character of storyData.characters) {
         if (character.name && character.description) {
           character.description = `${character.name} - ${character.description}`;
         }
       }
+
+      // Validate and enhance mood data for each scene
+      storyData.scenes = storyData.scenes.map(scene => ({
+        ...scene,
+        moodIntensity: scene.moodIntensity || 5,
+        emotionalTone: scene.emotionalTone || scene.mood,
+        moodConfig: this.getMoodConfiguration(scene.mood)
+      }));
       
-      console.log("StoryData", storyData.characters);
-      console.log("StoryData", storyData.scenes);
+      console.log("Enhanced StoryData with Moods:");
+      console.log("Characters:", storyData.characters);
+      console.log("Scenes with Moods:", storyData.scenes.map(s => ({
+        number: s.sceneNumber,
+        mood: s.mood,
+        intensity: s.moodIntensity,
+        tone: s.emotionalTone
+      })));
       
-      console.log(`✅ Country-aware news story generated: "${storyData.title}" with ${storyData.characters.length} characters`);
+      console.log(`✅ Country-aware news story with mood progression generated: "${storyData.title}"`);
       console.log(`🌍 Tailored for: ${countryContext.primaryCountry}${countryContext.primaryCity ? ` (${countryContext.primaryCity})` : ''}`);
+      console.log(`🎭 Mood progression: ${storyData.scenes.map(s => s.mood).join(' → ')}`);
+
+      console.log("Scenes", storyData.scenes)
       
       return storyData;
     } catch (error) {
@@ -395,15 +651,15 @@ class AnimationService {
     }
   }
 
-  // UPDATED: Phase 2: Character Generation with Country Context
+  // UPDATED: Phase 2: Character Generation with Mood Awareness
   async generateCharacterAssets(characters, countryContext) {
     const characterAssets = {};
 
     for (const character of characters) {
       try {
-        console.log(`🎭 Generating country-appropriate character: ${character.name}`);
+        console.log(`🎭 Generating mood-aware character: ${character.name}`);
 
-        // Generate master character image with country context
+        // Generate master character image with mood-neutral base
         const masterCharacterPrompt = `
         Create a Disney/Pixar style 3D character: ${character.description}. 
         ${character.personality}. 
@@ -414,29 +670,40 @@ class AnimationService {
         - Facial features representative of ${countryContext.primaryCountry} population (if applicable)
         - Cultural authenticity in overall presentation
         
-        CRITICAL REQUIREMENTS:
-        - Front view, neutral expression, clean white background
+        MOOD-NEUTRAL BASE CHARACTER REQUIREMENTS:
+        - Neutral, professional expression that can be adapted for different moods
+        - Front view, balanced expression, clean white background
         - High quality 3D rendering, professional Disney/Pixar animation style
-        - Vibrant colors, appealing character design
+        - Vibrant colors, appealing character design suitable for mood variations
         - HANDS MUST BE EMPTY - no objects, artifacts, or items in hands
         - Hands should be at sides or in relaxed position
         - NO microphones, phones, documents, tools, or any handheld items
         - Focus on facial features, clothing, and overall appearance only
-        - Clean, uncluttered character reference suitable for all scenes
-        - Authentic to ${countryContext.primaryCountry} cultural context`;
+        - Clean, uncluttered character reference suitable for all mood-based scenes
+        - Authentic to ${countryContext.primaryCountry} cultural context
+        - Expression should be adaptable for various moods (serious, hopeful, concerned, etc.)`;
 
         const masterImagePath = await this.generateImage(masterCharacterPrompt);
         
-        // Generate character expressions using master image as reference
-        const expressions = [];
+        // Generate character expressions for different moods
+        // const moodExpressions = ['serious', 'hopeful', 'concerned', 'professional', 'focused'];
+        const moodExpressions = [];
         const characterExpressions = {};
         
-        for (const expression of expressions) {
-            const expressionPrompt = `
-            Change the character's expression to ${expression} while maintaining the exact same character design, 
+        for (const moodExpression of moodExpressions) {
+          const moodConfig = this.getMoodConfiguration(moodExpression);
+          
+          const expressionPrompt = `
+            Change the character's expression to convey ${moodExpression} mood while maintaining the exact same character design, 
             style, colors, and physical appearance. Same Disney/Pixar 3D animation style, 
             front view, white background. Keep all character features identical except the facial expression.
-            Maintain cultural authenticity for ${countryContext.primaryCountry}.
+            
+            MOOD-SPECIFIC EXPRESSION REQUIREMENTS for ${moodExpression}:
+            - Facial expression should convey: ${moodConfig.keywords.join(', ')}
+            - Expression should be ${moodExpression} but professional and appropriate
+            - Maintain cultural authenticity for ${countryContext.primaryCountry}
+            - Eye expression, eyebrow position, and mouth should reflect ${moodExpression} mood
+            - Overall demeanor should be ${moodExpression} yet dignified
             
             CRITICAL: Keep hands EMPTY and free of any objects, artifacts, or items - exactly like the reference image.
             Maintain the same hand positioning and ensure no objects appear in the hands.`;  
@@ -445,21 +712,22 @@ class AnimationService {
             [masterImagePath], 
             expressionPrompt
           );
-          characterExpressions[expression] = expressionImagePath;
+          characterExpressions[moodExpression] = expressionImagePath;
         }
 
         characterAssets[character.name] = {
           master: masterImagePath,
           expressions: characterExpressions,
           description: character.description,
-          countryContext: countryContext
+          countryContext: countryContext,
+          moodCapable: true
         };
 
         // Copy to permanent character directory
         const permanentPath = path.join(this.workingDir, 'characters', `${character.name}_master.png`);
         await fs.copyFile(masterImagePath, permanentPath);
         
-        console.log(`✅ Generated ${countryContext.primaryCountry}-appropriate character ${character.name} with ${expressions.length} expressions`);
+        console.log(`✅ Generated ${countryContext.primaryCountry}-appropriate mood-capable character ${character.name} with ${moodExpressions.length} mood expressions`);
         
       } catch (error) {
         console.error(`Error generating character ${character.name}:`, error);
@@ -470,34 +738,49 @@ class AnimationService {
     return characterAssets;
   }
 
-  // UPDATED: Phase 3: Scene Generation with Country Context, Minimal Text, and Detailed Descriptions
+  // UPDATED: Phase 3: Enhanced Scene Generation with Comprehensive Mood Integration
   async generateSceneImages(scenes, characterAssets, countryContext) {
     const sceneImages = [];
 
     for (const scene of scenes) {
       try {
-        console.log(`🎬 Generating ${countryContext.primaryCountry}-authentic scene ${scene.sceneNumber}: ${scene.description.substring(0, 50)}...`);
+        console.log(`🎬 Generating mood-enhanced scene ${scene.sceneNumber} (${scene.mood}, intensity: ${scene.moodIntensity}): ${scene.description.substring(0, 50)}...`);
 
-        // Apply content safety filter
+        // Get mood configuration for this scene
+        const moodConfig = this.getMoodConfiguration(scene.mood);
+        console.log(`🎭 Applying ${scene.mood} mood with ${moodConfig.keywords.join(', ')} characteristics`);
+
+        // Apply content safety filter with mood awareness
         const { sanitizedDescription, wasModified } = this.sanitizeSceneForContentPolicy(scene.description, scene.sceneType);
 
-        // Collect reference images for characters in this scene
+        // Collect reference images for characters in this scene, choosing mood-appropriate expressions
         const referenceImages = [];
         let enhancedPrompt = sanitizedDescription;
 
-        // Build detailed character positioning and actions
+        // Build detailed character positioning and actions with mood
         let characterDetails = "";
         if (scene.characters && scene.characters.length > 0) {
-          // Build character reference mapping
+          // Build character reference mapping with mood-appropriate expressions
           let characterReferences = [];
           
           scene.characters.forEach((charName, index) => {
-            if (characterAssets[charName] && characterAssets[charName].master) {
-              referenceImages.push(characterAssets[charName].master);
+            if (characterAssets[charName]) {
+              // Choose mood-appropriate character expression
+              let characterImagePath = characterAssets[charName].master;
+              
+              if (characterAssets[charName].expressions && characterAssets[charName].expressions[scene.mood]) {
+                characterImagePath = characterAssets[charName].expressions[scene.mood];
+                console.log(`   Using ${scene.mood} expression for ${charName}`);
+              } else if (characterAssets[charName].expressions && characterAssets[charName].expressions['professional']) {
+                characterImagePath = characterAssets[charName].expressions['professional'];
+                console.log(`   Using professional expression for ${charName} (${scene.mood} not available)`);
+              }
+              
+              referenceImages.push(characterImagePath);
               characterReferences.push(`${charName}(image ${index + 1})`);
               
-              // Add detailed character positioning based on scene type
-              characterDetails += this.generateDetailedCharacterDescription(charName, index + 1, scene, countryContext);
+              // Add detailed character positioning based on scene type and mood
+              characterDetails += this.generateMoodAwareCharacterDescription(charName, index + 1, scene, countryContext, moodConfig);
             }
           });
 
@@ -516,34 +799,40 @@ class AnimationService {
           }
         }
 
-        // Generate detailed environmental description
-        const environmentalDetails = this.generateDetailedEnvironmentalDescription(scene, countryContext);
+        // Generate mood-enhanced environmental description
+        const environmentalDetails = this.generateMoodAwareEnvironmentalDescription(scene, countryContext, moodConfig);
         
-        // Generate detailed lighting and mood specifications
-        const lightingDetails = this.generateDetailedLightingDescription(scene, countryContext);
+        // Generate mood-enhanced lighting and mood specifications
+        const lightingDetails = this.generateMoodAwareLightingDescription(scene, countryContext, moodConfig);
         
-        // Generate detailed composition and camera specifications
-        const compositionDetails = this.generateDetailedCompositionDescription(scene, countryContext);
+        // Generate mood-enhanced composition and camera specifications
+        const compositionDetails = this.generateMoodAwareCompositionDescription(scene, countryContext, moodConfig);
 
-        // Build complete realistic scene prompt with extremely detailed descriptions
+        // Build complete mood-enhanced scene prompt
         let fullScenePrompt = `
-        HIGHLY DETAILED Disney/Pixar 3D animation scene: ${enhancedPrompt}
+        MOOD-ENHANCED Disney/Pixar 3D animation scene with ${scene.mood.toUpperCase()} mood (intensity: ${scene.moodIntensity}/10): ${enhancedPrompt}
         
-        SCENE LOCATION SPECIFICATIONS:
+        SCENE SPECIFICATIONS:
         Primary Location: ${scene.location}
-        Scene Mood: ${scene.mood}
+        Scene Mood: ${scene.mood} (${scene.emotionalTone})
+        Mood Intensity: ${scene.moodIntensity}/10
         Camera Position: ${scene.cameraAngle}
         
-        DETAILED CHARACTER POSITIONING & ACTIONS:
+        MOOD-SPECIFIC VISUAL TREATMENT:
+        Mood Keywords: ${moodConfig.keywords.join(', ')}
+        Emotional Tone: ${scene.emotionalTone}
+        Visual Style: ${scene.mood} mood with Disney/Pixar quality rendering
+        
+        DETAILED CHARACTER POSITIONING & MOOD ACTIONS:
         ${characterDetails}
         
-        DETAILED ENVIRONMENTAL DESCRIPTION:
+        MOOD-ENHANCED ENVIRONMENTAL DESCRIPTION:
         ${environmentalDetails}
         
-        DETAILED LIGHTING & ATMOSPHERE:
+        MOOD-ENHANCED LIGHTING & ATMOSPHERE:
         ${lightingDetails}
         
-        DETAILED COMPOSITION & FRAMING:
+        MOOD-ENHANCED COMPOSITION & FRAMING:
         ${compositionDetails}
         
         COUNTRY-SPECIFIC AUTHENTICITY FOR ${countryContext.primaryCountry}:
@@ -580,63 +869,66 @@ class AnimationService {
         - Use generic, non-readable text styling
         - Focus on shapes and colors rather than readable content
         - Make any background text appear as visual texture, not readable information
-        - Prioritize clean, uncluttered visual composition
+        - Prioritize clean, uncluttered visual composition matching ${scene.mood} mood
         - Text should blend into the background as environmental detail
         
         TECHNICAL RENDERING SPECIFICATIONS:
-        - Ultra-high quality Disney/Pixar 3D rendering
-        - Professional cinematic lighting with realistic shadows and reflections
-        - Photorealistic materials and textures
-        - Advanced depth of field and bokeh effects
-        - Vibrant but naturalistic color grading
-        - Sharp focus on main subjects with appropriate background blur
-        - Film-quality composition and framing
-        - Professional broadcast-ready visual quality
+        - Ultra-high quality Disney/Pixar 3D rendering optimized for ${scene.mood} mood
+        - Professional cinematic lighting matching ${scene.mood} mood requirements
+        - Photorealistic materials and textures with ${scene.mood} mood enhancement
+        - Advanced depth of field and bokeh effects supporting ${scene.mood} mood
+        - Color grading specifically calibrated for ${scene.mood} mood (intensity: ${scene.moodIntensity}/10)
+        - Sharp focus on main subjects with ${scene.mood} mood-appropriate background treatment
+        - Film-quality composition and framing supporting ${scene.mood} emotional tone
+        - Professional broadcast-ready visual quality with ${scene.mood} mood consistency
         
         CULTURAL AUTHENTICITY REQUIREMENTS:
         - Buildings and infrastructure must match ${countryContext.architecturalStyle}
         - Street scenes include typical ${countryContext.primaryCountry} elements (vehicles, street furniture, signage styles)
         - Background characters reflect authentic local demographics: ${countryContext.demographicNotes}
         - Environmental details culturally accurate for ${countryContext.primaryCountry}
-        - Weather and lighting appropriate for the geographical region
+        - Weather and lighting appropriate for the geographical region and ${scene.mood} mood
         - Local architectural details and urban planning styles
         - Authentic vehicle models and license plate styles for the region
         - Appropriate flora and landscape elements for the climate
         
         CONTENT SAFETY & PROFESSIONALISM:
-        - Maintain REALISTIC and NEWS-APPROPRIATE content
+        - Maintain REALISTIC and NEWS-APPROPRIATE content with ${scene.mood} mood treatment
         - Focus on aftermath, response, and community impact rather than violent actions
         - Show professional emergency responders, investigators, and community support
-        - Avoid graphic content, violence, or disturbing imagery
-        - Family-friendly presentation suitable for broadcast news
-        - No weapons, blood, or explicit violence - emphasize response and recovery
+        - Avoid graphic content, violence, or disturbing imagery while maintaining ${scene.mood} mood authenticity
+        - Family-friendly presentation suitable for broadcast news with appropriate ${scene.mood} mood
+        - No weapons, blood, or explicit violence - emphasize response and recovery with ${scene.mood} mood
         - Highlight human resilience, community support, and professional response
-        - Clean visual environment without distracting textual elements
+        - Clean visual environment without distracting textual elements, optimized for ${scene.mood} mood
         
         CHARACTER CONSISTENCY REQUIREMENTS:
         - Maintain exact character designs, colors, and physical features from reference images
+        - Apply ${scene.mood} mood-appropriate expressions and body language
         - Keep consistent facial features, hair, clothing, and body proportions
         - Ensure professional, realistic appearance appropriate for ${countryContext.primaryCountry} context
-        - Characters should maintain their established visual identity across all scenes
-        - Preserve character personality through body language and positioning
+        - Characters should maintain their established visual identity with ${scene.mood} mood adaptation
+        - Preserve character personality through ${scene.mood} mood-enhanced body language and positioning
         
         FINAL QUALITY STANDARDS:
         - No magical elements, fantasy creatures, or fictional aspects
-        - Professional, real-world setting appropriate for news content
+        - Professional, real-world setting appropriate for news content with ${scene.mood} mood enhancement
         - Modern, contemporary ${countryContext.primaryCountry} environments
         - Maintain journalistic accuracy and cultural authenticity
         - Minimize readable text to maintain focus on visual narrative
-        - Achieve broadcast-quality, professional animation standards`;
+        - Achieve broadcast-quality, professional animation standards with sophisticated ${scene.mood} mood implementation
+        - Mood intensity of ${scene.moodIntensity}/10 should be clearly evident in lighting, color, and atmosphere`;
 
         let sceneImagePath;
 
         if (referenceImages.length > 0) {
-          // Generate scene with character references and detailed descriptions
-          console.log(`   Using ${referenceImages.length} character reference images with detailed scene specifications for ${countryContext.primaryCountry}-authentic scene`);
+          // Generate scene with character references and mood-enhanced descriptions
+          console.log(`   Using ${referenceImages.length} mood-appropriate character reference images for ${scene.mood} scene`);
+        //   console.log("Full Scene Prompt ", fullScenePrompt)
           sceneImagePath = await this.generateImageWithReference(referenceImages, fullScenePrompt);
         } else {
-          // Generate scene without character references but with detailed descriptions
-          console.log(`   Generating detailed scene without character references for ${countryContext.primaryCountry}-authentic environment`);
+          // Generate scene without character references but with mood enhancement
+          console.log(`   Generating ${scene.mood} mood scene without character references`);
           sceneImagePath = await this.generateImage(fullScenePrompt);
         }
         
@@ -651,30 +943,35 @@ class AnimationService {
           charactersUsed: scene.characters || [],
           contentModified: wasModified,
           countryContext: countryContext,
-          detailedPromptUsed: true // Flag to indicate detailed prompting was used
+          mood: scene.mood,
+          moodIntensity: scene.moodIntensity,
+          emotionalTone: scene.emotionalTone,
+          moodConfig: moodConfig,
+          detailedPromptUsed: true,
+          moodEnhanced: true
         });
 
         // Copy to permanent scene directory
-        const permanentPath = path.join(this.workingDir, 'scenes', `scene_${scene.sceneNumber}.png`);
+        const permanentPath = path.join(this.workingDir, 'scenes', `scene_${scene.sceneNumber}_${scene.mood}.png`);
         await fs.copyFile(sceneImagePath, permanentPath);
 
         if (wasModified) {
-          console.log(`✅ Content-safe ${countryContext.primaryCountry}-authentic detailed scene ${scene.sceneNumber} generated with minimal text (content modified for safety)`);
+          console.log(`✅ Content-safe ${scene.mood} mood scene ${scene.sceneNumber} generated (content modified for safety)`);
         } else {
-          console.log(`✅ ${countryContext.primaryCountry}-authentic detailed scene ${scene.sceneNumber} generated with minimal text and ${scene.characters?.length || 0} character references`);
+          console.log(`✅ ${scene.mood} mood scene ${scene.sceneNumber} generated with ${scene.characters?.length || 0} mood-appropriate character references`);
         }
 
       } catch (error) {
-        console.error(`Error generating detailed scene ${scene.sceneNumber}:`, error);
-        throw new Error(`Failed to generate detailed scene: ${scene.sceneNumber}`);
+        console.error(`Error generating mood-enhanced scene ${scene.sceneNumber}:`, error);
+        throw new Error(`Failed to generate mood-enhanced scene: ${scene.sceneNumber}`);
       }
     }
 
     return sceneImages;
   }
 
-  // Helper method to generate detailed family-friendly character descriptions
-  generateDetailedCharacterDescription(charName, imageIndex, scene, countryContext) {
+  // NEW: Generate mood-aware character descriptions
+  generateMoodAwareCharacterDescription(charName, imageIndex, scene, countryContext, moodConfig) {
     const sceneTypePositioning = {
       'action': {
         primary: 'positioned dynamically in the center-left of frame, body slightly turned towards camera, confident coordination stance with feet shoulder-width apart',
@@ -702,119 +999,94 @@ class AnimationService {
     const isPrimary = imageIndex === 1;
     const charPosition = isPrimary ? positioning.primary : positioning.secondary;
 
-    // Sanitize mood for family-friendly content
-    const safeMood = scene.mood
-      .replace(/serious|urgent|concerned/gi, 'focused')
-      .replace(/crisis|emergency/gi, 'coordination')
-      .replace(/investigation/gi, 'planning');
-
     return `
-    CHARACTER ${imageIndex} - ${charName}(image ${imageIndex}):
+    CHARACTER ${imageIndex} - ${charName}(image ${imageIndex}) - ${scene.mood.toUpperCase()} MOOD:
     - POSITIONING: ${charPosition}
-    - CULTURAL CONTEXT: Appearance and attire authentic to ${countryContext.primaryCountry} positive professional standards
-    - CLOTHING: Appropriate for ${countryContext.primaryCountry} ${safeMood} coordination setting, matching local professional dress codes
-    - EXPRESSION: ${safeMood} expression appropriate for positive community context, conveying ${scene.sceneType} coordination emotion
-    - BODY LANGUAGE: Professional, positive coordination posture with hands clearly visible and empty of objects
-    - ACTIVITY: Engaged in constructive coordination and positive professional activities
-    - LIGHTING: Character lit with warm professional lighting, clear positive facial features, no harsh shadows
-    - DEPTH: ${isPrimary ? 'Primary focus with sharp positive detail' : 'Secondary depth with positive background integration'}
-    - CULTURAL DETAILS: Authentic ${countryContext.primaryCountry} demographic representation in facial features and positive styling
-    - INTERACTION: All interactions appear constructive, supportive, and professionally collaborative
+    - MOOD-SPECIFIC BODY LANGUAGE: ${this.getMoodBodyLanguage(scene.mood, moodConfig)}
+    - FACIAL EXPRESSION: ${scene.mood} expression conveying ${scene.emotionalTone}
+    - CULTURAL CONTEXT: Appearance and attire authentic to ${countryContext.primaryCountry} ${scene.mood} professional standards
+    - CLOTHING: Appropriate for ${countryContext.primaryCountry} ${scene.mood} setting, matching local professional dress codes
+    - MOOD INTENSITY: ${scene.moodIntensity}/10 intensity reflected in posture and expression
+    - ACTIVITY: Engaged in ${scene.mood} ${scene.sceneType} coordination activities
+    - LIGHTING: Character lit with ${moodConfig.lighting.atmosphere}
+    - DEPTH: ${isPrimary ? 'Primary focus with sharp detail' : 'Secondary depth with background integration'}
+    - CULTURAL DETAILS: Authentic ${countryContext.primaryCountry} demographic representation
+    - MOOD KEYWORDS: Embodying ${moodConfig.keywords.join(', ')}
     `;
   }
 
-  // Helper method to generate detailed family-friendly environmental descriptions
-  generateDetailedEnvironmentalDescription(scene, countryContext) {
-    const locationTypes = {
-      'office': `Modern ${countryContext.primaryCountry} office environment with welcoming local architectural details, contemporary furniture matching regional business culture, pleasant lighting fixtures, clean organized design reflecting local corporate aesthetics, appropriate window views of ${countryContext.primaryCountry} positive cityscape with coordination activities`,
-      
-      'street': `Pleasant ${countryContext.primaryCountry} street scene with beautiful local architecture: ${countryContext.architecturalStyle}, well-maintained vehicles with regional characteristics, attractive street furniture matching local municipal standards, pedestrian infrastructure typical of ${countryContext.primaryCountry} positive urban planning, pleasant weather conditions for the region`,
-      
-      'government': `Professional ${countryContext.primaryCountry} government building interior/exterior featuring impressive national architectural style, formal institutional design elements, appropriate national symbols and architectural details, positive civic environment matching local government building standards with coordination activities`,
-      
-      'residential': `Pleasant ${countryContext.primaryCountry} residential area with beautiful local housing architecture, regional landscape elements, appropriate attractive flora for the climate, neighborhood characteristics matching local suburban/urban development patterns with positive community coordination`,
-      
-      'hospital': `Professional ${countryContext.primaryCountry} medical facility with modern welcoming healthcare environment, clean positive clinical design, appropriate medical equipment visible but not prominent, professional healthcare setting matching local medical infrastructure standards with coordination activities`,
-      
-      'school': `Educational facility in ${countryContext.primaryCountry} with impressive local school architecture, positive educational environment appropriate for the region, modern learning facilities matching local educational infrastructure standards with coordination activities`
+  // NEW: Get mood-specific body language
+  getMoodBodyLanguage(mood, moodConfig) {
+    const bodyLanguageMap = {
+      'serious': 'upright posture, hands at sides, formal stance, direct gaze, composed demeanor',
+      'hopeful': 'open posture, slightly forward lean, gentle smile, optimistic stance',
+      'concerned': 'attentive posture, slight forward lean, caring expression, engaged stance',
+      'urgent': 'alert posture, focused stance, professional urgency, ready-for-action demeanor',
+      'informative': 'professional posture, clear gesture positioning, educational stance',
+      'celebratory': 'joyful posture, open gestures, celebratory stance, positive energy',
+      'reflective': 'contemplative posture, thoughtful stance, introspective demeanor',
+      'professional': 'business-appropriate posture, confident stance, competent demeanor'
     };
 
-    // Determine location type from scene location
-    let locationType = 'office'; // default
-    const location = scene.location.toLowerCase();
-    if (location.includes('street') || location.includes('road') || location.includes('plaza')) locationType = 'street';
-    else if (location.includes('government') || location.includes('capitol') || location.includes('ministry')) locationType = 'government';
-    else if (location.includes('home') || location.includes('house') || location.includes('residential')) locationType = 'residential';
-    else if (location.includes('hospital') || location.includes('medical') || location.includes('clinic')) locationType = 'hospital';
-    else if (location.includes('school') || location.includes('university') || location.includes('campus')) locationType = 'school';
+    return bodyLanguageMap[mood] || bodyLanguageMap['professional'];
+  }
 
-    const baseEnvironment = locationTypes[locationType] || locationTypes['office'];
+  // NEW: Generate mood-aware environmental descriptions
+  generateMoodAwareEnvironmentalDescription(scene, countryContext, moodConfig) {
+    const baseEnvironment = this.getLocationEnvironment(scene.location, countryContext);
 
     return `
-    FAMILY-FRIENDLY ENVIRONMENTAL SPECIFICATIONS:
-    - PRIMARY SETTING: ${baseEnvironment}
-    - ARCHITECTURAL DETAILS: Beautiful ${countryContext.architecturalStyle} with attractive construction materials and positive design elements
-    - BACKGROUND ELEMENTS: 3-5 carefully placed positive environmental props that enhance the coordination scene without clutter (attractive furniture, coordination equipment, pleasant architectural features)
-    - SCALE & PROPORTION: Realistic human scale relative to welcoming environment, proper perspective and positive depth
-    - CULTURAL AUTHENTICITY: All environmental elements reflect positive ${countryContext.primaryCountry} design standards and cultural preferences
-    - CLEANLINESS: Professional, well-maintained, welcoming environment appropriate for positive community coordination
-    - DEPTH LAYERS: Foreground (2-3 positive elements), middle ground (main coordination area), background (supporting positive environmental context)
-    - MATERIAL QUALITY: Attractive realistic textures and materials - glass, metal, wood, concrete, fabric - all rendered with appealing photorealistic quality
-    - ATMOSPHERIC PERSPECTIVE: Positive depth cues with background elements appearing pleasant and inviting
-    - REGIONAL FLORA: If outdoor scene, include beautiful appropriate vegetation and landscape elements for ${countryContext.primaryCountry} climate
-    - ACTIVITY CONTEXT: All environmental elements suggest positive coordination, planning, and community collaboration activities
+    MOOD-ENHANCED ENVIRONMENTAL SPECIFICATIONS (${scene.mood.toUpperCase()}):
+    - PRIMARY SETTING: ${baseEnvironment} enhanced with ${scene.mood} mood characteristics
+    - MOOD-SPECIFIC LIGHTING: ${moodConfig.lighting.atmosphere}
+    - COLOR PALETTE: ${moodConfig.composition.colors} reflecting ${scene.mood} mood
+    - ARCHITECTURAL DETAILS: Beautiful ${countryContext.architecturalStyle} with ${scene.mood} mood-appropriate materials and design elements
+    - MOOD-ENHANCED PROPS: 3-5 carefully placed environmental props that enhance the ${scene.mood} scene (${moodConfig.keywords.join(', ')} elements)
+    - ATMOSPHERIC QUALITY: ${moodConfig.lighting.intensity} creating ${scene.mood} mood
+    - CULTURAL AUTHENTICITY: All environmental elements reflect ${countryContext.primaryCountry} design standards with ${scene.mood} mood enhancement
+    - MOOD AMBIANCE: Professional, ${scene.mood} environment appropriate for ${scene.emotionalTone}
+    - DEPTH LAYERS: Foreground (${scene.mood} elements), middle ground (main ${scene.mood} area), background (supporting ${scene.mood} context)
+    - MATERIAL QUALITY: Realistic textures and materials rendered with ${scene.mood} mood-appropriate lighting and color treatment
+    - REGIONAL FLORA: If outdoor scene, include vegetation and landscape elements for ${countryContext.primaryCountry} climate with ${scene.mood} mood enhancement
+    - ACTIVITY CONTEXT: All environmental elements suggest ${scene.mood} ${scene.sceneType} activities
     `;
   }
 
-  // Helper method to generate detailed family-friendly lighting descriptions
-  generateDetailedLightingDescription(scene, countryContext) {
-    const moodLighting = {
-      'serious': 'Professional warm lighting with balanced contrast, maintaining clear positive visibility while conveying focus through welcoming directional lighting',
-      'urgent': 'Balanced contrast with pleasant color temperature, professional coordination lighting that conveys productivity without being dramatic, clean and clear positive illumination',
-      'hopeful': 'Warm, balanced lighting with soft shadows, optimistic color temperature leaning warm, professional quality with uplifting atmospheric feel',
-      'concerned': 'Warm professional lighting with controlled contrast, maintaining positive standards while conveying focus through pleasant lighting direction',
-      'informative': 'Clean, pleasant coordination lighting optimized for clarity and positive information delivery, minimal shadows, crisp and welcoming illumination',
-      'professional': 'Standard welcoming lighting setup with proper key, fill, and background lighting, pleasant color temperature and positive contrast ratios',
-      'focused': 'Concentrated warm lighting emphasizing positive coordination activities with pleasant atmospheric quality'
-    };
-
+  // NEW: Generate mood-aware lighting descriptions
+  generateMoodAwareLightingDescription(scene, countryContext, moodConfig) {
     const timeOfDay = this.determineTimeOfDay(scene);
     const weatherConditions = this.determineWeatherConditions(scene, countryContext);
 
-    // Sanitize mood for family-friendly lighting
-    const safeMood = scene.mood
-      .replace(/serious|urgent|concerned/gi, 'focused')
-      .replace(/crisis|emergency/gi, 'coordination')
-      .replace(/investigation/gi, 'planning');
-
     return `
-    POSITIVE LIGHTING & ATMOSPHERE SPECIFICATIONS:
-    - PRIMARY LIGHTING: ${moodLighting[safeMood] || moodLighting['professional']}
-    - TIME OF DAY: ${timeOfDay.description} with appropriate pleasant natural lighting conditions
-    - WEATHER: ${weatherConditions.description} affecting ambient lighting and positive atmosphere
-    - COLOR TEMPERATURE: ${timeOfDay.colorTemp} maintaining pleasant natural appearance for ${countryContext.primaryCountry} geographical location
-    - SHADOW QUALITY: Soft, appealing shadows with proper depth and direction, avoiding harsh or distracting shadow patterns
-    - AMBIENT OCCLUSION: Subtle environmental shadowing that enhances depth and positive realism without darkening the scene
-    - REFLECTION QUALITY: Appropriate pleasant reflections on glass, metal, and polished surfaces maintaining welcoming photorealistic quality
-    - ATMOSPHERIC EFFECTS: ${weatherConditions.atmospherics} contributing to positive environmental authenticity
-    - CONTRAST RATIO: Pleasant standards maintaining detail in both highlights and shadows with positive energy
-    - HIGHLIGHT MANAGEMENT: Controlled highlights preventing overexposure while maintaining attractive material authenticity
-    - BACKGROUND LIGHTING: Graduated pleasant lighting that supports positive depth perception and welcoming environmental integration
-    - REGIONAL LIGHTING: Appropriate for ${countryContext.primaryCountry} geographical latitude and typical pleasant weather patterns
-    - MOOD ENHANCEMENT: Lighting specifically designed to create positive, welcoming, and constructive atmosphere for coordination activities
+    MOOD-ENHANCED LIGHTING & ATMOSPHERE (${scene.mood.toUpperCase()}):
+    - PRIMARY LIGHTING: ${moodConfig.lighting.atmosphere} with ${moodConfig.lighting.colorTemp}
+    - MOOD-SPECIFIC SHADOWS: ${moodConfig.lighting.shadows}
+    - INTENSITY LEVEL: ${moodConfig.lighting.intensity} (${scene.moodIntensity}/10 mood intensity)
+    - TIME OF DAY: ${timeOfDay.description} with ${scene.mood} mood-appropriate natural lighting
+    - WEATHER: ${weatherConditions.description} affecting ${scene.mood} ambient lighting
+    - COLOR TEMPERATURE: ${moodConfig.lighting.colorTemp} maintaining ${scene.mood} mood authenticity
+    - SHADOW QUALITY: ${moodConfig.lighting.shadows} supporting ${scene.mood} emotional tone
+    - AMBIENT OCCLUSION: Subtle environmental shadowing enhancing ${scene.mood} mood depth
+    - REFLECTION QUALITY: Appropriate reflections with ${scene.mood} mood-enhanced lighting treatment
+    - ATMOSPHERIC EFFECTS: ${weatherConditions.atmospherics} contributing to ${scene.mood} mood
+    - CONTRAST RATIO: ${scene.mood} mood-appropriate contrast maintaining emotional impact
+    - HIGHLIGHT MANAGEMENT: Controlled highlights supporting ${scene.mood} mood authenticity
+    - BACKGROUND LIGHTING: Graduated lighting supporting ${scene.mood} mood depth perception
+    - REGIONAL LIGHTING: Appropriate for ${countryContext.primaryCountry} with ${scene.mood} mood enhancement
+    - MOOD ENHANCEMENT: Lighting specifically designed to create ${scene.mood} atmosphere with ${scene.emotionalTone}
     `;
   }
 
-  // Helper method to generate detailed family-friendly composition descriptions
-  generateDetailedCompositionDescription(scene, countryContext) {
+  // NEW: Generate mood-aware composition descriptions
+  generateMoodAwareCompositionDescription(scene, countryContext, moodConfig) {
     const cameraAngles = {
-      'close-up': 'Welcoming framing focusing on positive character expressions and emotions, pleasant depth of field highlighting subjects in positive environment',
-      'medium shot': 'Balanced composition showing characters from waist up, optimal for positive dialogue and character coordination interaction',
-      'wide shot': 'Pleasant establishing composition showing full environment and positive character context, appropriate for location and coordination establishment',
-      'over-the-shoulder': 'Dynamic composition providing viewer perspective and positive character connection, professional coordination-style framing',
-      'low angle': 'Slight upward angle conveying positive authority and importance, maintaining professional community coordination standards',
-      'high angle': 'Elevated perspective providing comprehensive positive view while maintaining subject dignity and professional presentation',
-      'eye level': 'Standard professional coordination framing at natural eye level, optimal for viewer connection and positive information delivery'
+      'close-up': 'framing focusing on character expressions and emotions',
+      'medium shot': 'balanced composition showing characters from waist up',
+      'wide shot': 'establishing composition showing full environment and character context',
+      'over-the-shoulder': 'dynamic composition providing viewer perspective',
+      'low angle': 'slight upward angle conveying authority and importance',
+      'high angle': 'elevated perspective providing comprehensive view',
+      'eye level': 'standard framing at natural eye level'
     };
 
     const angle = scene.cameraAngle.toLowerCase();
@@ -827,23 +1099,49 @@ class AnimationService {
     });
 
     return `
-    POSITIVE COMPOSITION & FRAMING SPECIFICATIONS:
-    - CAMERA ANGLE: ${cameraSpec}
-    - ASPECT RATIO: 16:9 professional format optimized for positive community coordination presentation
-    - RULE OF THIRDS: Strategic placement of key elements along compositional grid lines for welcoming visual balance
-    - DEPTH OF FIELD: Appropriate focus zones - sharp foreground subjects with controlled pleasant background focus based on coordination scene requirements
-    - LEADING LINES: Environmental elements that guide viewer attention to primary coordination subjects without distraction
-    - VISUAL BALANCE: Harmonious distribution of positive visual weight across the frame, avoiding cluttered or unbalanced compositions
-    - HEADROOM: Appropriate pleasant space above characters maintaining professional welcoming framing standards
-    - BREATHING ROOM: Adequate space around subjects preventing cramped or claustrophobic framing, promoting positive energy
-    - BACKGROUND INTEGRATION: Background elements support and positively complement primary coordination subjects
-    - CULTURAL FRAMING: Composition style appropriate for ${countryContext.primaryCountry} positive community coordination standards
-    - MOVEMENT SPACE: If applicable, appropriate directional space for positive implied movement or coordination eye lines
-    - SYMMETRY/ASYMMETRY: Balanced compositional approach appropriate for positive community content and coordination scene type
-    - FRAME STABILITY: Solid, stable composition suitable for professional coordination without distracting tilt or unusual angles
-    - VISUAL HIERARCHY: Clear primary, secondary, and tertiary elements guiding viewer attention through the positive coordination scene effectively
-    - POSITIVE ENERGY: Composition specifically designed to convey collaboration, teamwork, and constructive community activities
+    MOOD-ENHANCED COMPOSITION & FRAMING (${scene.mood.toUpperCase()}):
+    - CAMERA ANGLE: ${cameraSpec} optimized for ${scene.mood} mood expression
+    - MOOD-SPECIFIC FRAMING: ${moodConfig.composition.angles}
+    - COMPOSITION STYLE: ${moodConfig.composition.framing}
+    - COLOR TREATMENT: ${moodConfig.composition.colors} palette supporting ${scene.mood} mood
+    - DEPTH OF FIELD: ${moodConfig.composition.depth} based on ${scene.mood} mood requirements
+    - ASPECT RATIO: 16:9 professional format optimized for ${scene.mood} mood presentation
+    - RULE OF THIRDS: Strategic placement supporting ${scene.mood} emotional impact
+    - LEADING LINES: Environmental elements guiding attention with ${scene.mood} mood support
+    - VISUAL BALANCE: Harmonious distribution supporting ${scene.mood} mood (intensity: ${scene.moodIntensity}/10)
+    - HEADROOM: Space above characters maintaining ${scene.mood} mood-appropriate framing
+    - BREATHING ROOM: Adequate space promoting ${scene.mood} emotional energy
+    - BACKGROUND INTEGRATION: Background elements supporting ${scene.mood} mood
+    - CULTURAL FRAMING: Composition appropriate for ${countryContext.primaryCountry} with ${scene.mood} mood
+    - MOVEMENT SPACE: Directional space for ${scene.mood} mood-appropriate movement
+    - SYMMETRY/ASYMMETRY: Balanced approach appropriate for ${scene.mood} mood and ${scene.sceneType} content
+    - FRAME STABILITY: Composition suitable for ${scene.mood} mood without distracting elements
+    - VISUAL HIERARCHY: Clear elements guiding attention through ${scene.mood} mood experience
+    - MOOD ENERGY: Composition specifically designed to convey ${scene.mood} atmosphere with ${scene.emotionalTone}
     `;
+  }
+
+  // Helper method to get base location environment
+  getLocationEnvironment(location, countryContext) {
+    const locationTypes = {
+      'office': `Modern ${countryContext.primaryCountry} office environment with local architectural details`,
+      'street': `${countryContext.primaryCountry} street scene with local architecture: ${countryContext.architecturalStyle}`,
+      'government': `Professional ${countryContext.primaryCountry} government building with national architectural style`,
+      'residential': `${countryContext.primaryCountry} residential area with local housing architecture`,
+      'hospital': `Professional ${countryContext.primaryCountry} medical facility with modern healthcare environment`,
+      'school': `Educational facility in ${countryContext.primaryCountry} with local school architecture`
+    };
+
+    // Determine location type from scene location
+    let locationType = 'office'; // default
+    const locationLower = location.toLowerCase();
+    if (locationLower.includes('street') || locationLower.includes('road') || locationLower.includes('plaza')) locationType = 'street';
+    else if (locationLower.includes('government') || locationLower.includes('capitol') || locationLower.includes('ministry')) locationType = 'government';
+    else if (locationLower.includes('home') || locationLower.includes('house') || locationLower.includes('residential')) locationType = 'residential';
+    else if (locationLower.includes('hospital') || locationLower.includes('medical') || locationLower.includes('clinic')) locationType = 'hospital';
+    else if (locationLower.includes('school') || locationLower.includes('university') || locationLower.includes('campus')) locationType = 'school';
+
+    return locationTypes[locationType] || locationTypes['office'];
   }
 
   // Helper method to determine time of day from scene context
@@ -888,7 +1186,7 @@ class AnimationService {
         description: 'Overcast with light atmospheric haze',
         atmospherics: 'Soft, diffused lighting with increased atmospheric perspective and subtle moisture in air'
       };
-    } else if (description.includes('sun') || description.includes('bright') || mood.includes('optimistic')) {
+    } else if (description.includes('sun') || description.includes('bright') || mood.includes('hopeful') || mood.includes('celebratory')) {
       return {
         description: 'Clear, bright conditions',
         atmospherics: 'Crisp, clear atmosphere with sharp shadows and vibrant colors'
@@ -906,21 +1204,48 @@ class AnimationService {
     }
   }
 
-  // Phase 4: Video Generation with Enhanced Content Safety
+  // UPDATED: Phase 4: Video Generation with Enhanced Mood Integration
   async generateSceneVideos(sceneImages) {
     const sceneVideos = [];
 
     for (const scene of sceneImages) {
       try {
-        console.log(`🎥 Generating family-friendly video for scene ${scene.sceneNumber}`);
+        console.log(`🎥 Generating ${scene.mood} mood video for scene ${scene.sceneNumber} (intensity: ${scene.moodIntensity}/10)`);
 
-        // Generate motion description using GPT-4 with enhanced safety focus
-        const motionSystemPrompt = `You are a family-friendly animation director creating gentle, positive motion descriptions for Disney-style video generation. Focus exclusively on calm, professional, constructive movements suitable for all audiences. Emphasize coordination, cooperation, and positive civic activities.`;
+        // Get mood configuration for enhanced motion generation
+        const moodConfig = scene.moodConfig || this.getMoodConfiguration(scene.mood);
+
+        // Generate motion description using GPT-4 with enhanced mood integration
+        const motionSystemPrompt = `You are a professional Disney animation director specializing in mood-based motion design. Create motion descriptions that perfectly capture specific moods while maintaining family-friendly, professional content suitable for news animation. Focus on how camera movement, character motion, and environmental elements should move to convey the exact mood specified.
+
+        MOOD EXPERTISE: You understand how different moods require different motion approaches:
+        - SERIOUS: Steady, measured movements conveying authority and importance
+        - HOPEFUL: Gentle, uplifting movements with positive energy
+        - CONCERNED: Careful, thoughtful movements showing consideration
+        - URGENT: Focused, efficient movements without chaos or alarm
+        - INFORMATIVE: Clear, stable movements supporting comprehension
+        - CELEBRATORY: Joyful, energetic movements with positive momentum
+        - REFLECTIVE: Slow, contemplative movements encouraging thought
+        - PROFESSIONAL: Competent, reliable movements maintaining business standards`;
         
-        const motionUserPrompt = `Create gentle, family-friendly motion for this positive community scene:
+        const motionUserPrompt = `Create mood-specific motion for this ${scene.mood.toUpperCase()} scene (intensity: ${scene.moodIntensity}/10):
         ${scene.description}
         
-        CRITICAL FAMILY-FRIENDLY REQUIREMENTS:
+        MOOD-SPECIFIC MOTION REQUIREMENTS for ${scene.mood}:
+        - Mood Character: ${moodConfig.keywords.join(', ')}
+        - Motion Style: ${moodConfig.motion.pace}
+        - Camera Work: ${moodConfig.motion.camera}
+        - Character Movement: ${moodConfig.motion.character}
+        - Transitions: ${moodConfig.motion.transitions}
+        - Intensity Level: ${scene.moodIntensity}/10 (adjust motion intensity accordingly)
+        - Emotional Tone: ${scene.emotionalTone}
+        
+        SCENE CONTEXT:
+        - Scene type: ${scene.sceneType}
+        - Scene duration: ${scene.duration} seconds
+        - Cultural context: Appropriate for professional news content
+        
+        FAMILY-FRIENDLY REQUIREMENTS:
         - Focus ONLY on positive coordination, planning, and community cooperation
         - Show professional collaboration and constructive teamwork
         - Emphasize helpful assistance and positive civic engagement
@@ -928,35 +1253,11 @@ class AnimationService {
         - Present all interactions as positive professional coordination
         - Focus on community support and collaborative problem-solving
         
-        GENTLE MOVEMENT REQUIREMENTS:
-        - ONLY very subtle, slow, positive movements
-        - NO fast movements, sudden motions, or dramatic gestures
-        - Focus on calm, professional coordination activities
-        - Scene type: ${scene.sceneType}
-        - Scene duration: ${scene.duration} seconds
+        MOOD-APPROPRIATE MOVEMENT GUIDELINES:
+        For ${scene.mood} mood specifically:
+        ${this.getMoodSpecificMotionGuidelines(scene.mood, scene.moodIntensity)}
         
-        Family-friendly gentle movements:
-        - Gentle head nods during positive discussions
-        - Slow camera pans showing organized coordination activities
-        - Professional team members working together calmly
-        - Community leaders planning and coordinating constructively
-        - People collaborating and supporting each other positively
-        - Gradual lighting changes showing pleasant atmosphere
-        - Slow eye movements showing focus and positive concentration
-        - Gentle hand gestures indicating coordination and cooperation
-        - Calm walking movements showing purposeful coordination
-        - Pleasant expressions showing positive engagement
-        
-        COMPLETELY AVOID:
-        - Any rapid or sudden movements
-        - Any gestures that could appear confrontational
-        - Fast camera movements or dramatic motion
-        - Any motion that could appear tense or stressful
-        - Quick hand gestures or rapid talking
-        - Any movement suggesting urgency or stress
-        - Motion that could cause visual distortion
-        
-        Provide a positive, family-friendly motion description (max 150 characters) focusing on gentle, constructive, collaborative movements that emphasize community cooperation and positive coordination.`;
+        Provide a mood-appropriate motion description (max 150 characters) that perfectly captures ${scene.mood} mood with ${scene.moodIntensity}/10 intensity while maintaining professional, family-friendly content.`;
 
         const motionResponse = await this.openai.responses.parse({
           model: "gpt-4o-2024-08-06",
@@ -971,22 +1272,24 @@ class AnimationService {
 
         let motionDescription = motionResponse.output_parsed.motionDescription;
 
-        // Enhance prompt for family-friendly Disney quality
-        const enhancedPrompt = this.enhancePromptForFamilyFriendlyDisney(motionDescription, scene);
+        // Enhance prompt for mood-specific Disney quality
+        const enhancedPrompt = this.enhancePromptForMoodSpecificDisney(motionDescription, scene, moodConfig);
 
         // Convert local image file to a format APIs can use
         const imageUrl = await this.convertLocalImageForKlingAI(scene.image);
 
-        // Generate video using Kling AI with family-friendly fallback strategy
+        // Generate video using Kling AI with mood-specific settings
         const result = await KlingAI.generateVideoWithFallback(
           imageUrl,
           enhancedPrompt,
           scene.duration,
-          scene.sceneType
+          scene.sceneType,
+          scene.mood,
+          scene.moodIntensity
         );
 
         // Download video locally
-        const videoPath = path.join(this.workingDir, 'videos', `scene_${scene.sceneNumber}_${uuidv4()}.mp4`);
+        const videoPath = path.join(this.workingDir, 'videos', `scene_${scene.sceneNumber}_${scene.mood}_${uuidv4()}.mp4`);
         await KlingAI.downloadVideo(result.videoUrl, videoPath);
         
         sceneVideos.push({
@@ -994,75 +1297,140 @@ class AnimationService {
           videoPath: videoPath,
           narration: scene.narration,
           duration: scene.duration,
-          klingTaskId: result.taskId
+          klingTaskId: result.taskId,
+          mood: scene.mood,
+          moodIntensity: scene.moodIntensity,
+          emotionalTone: scene.emotionalTone
         });
 
-        console.log(`✅ Family-friendly scene ${scene.sceneNumber} video generated successfully`);
+        console.log(`✅ ${scene.mood} mood scene ${scene.sceneNumber} video generated successfully (intensity: ${scene.moodIntensity}/10)`);
 
       } catch (error) {
-        console.error(`Error generating video for scene ${scene.sceneNumber}:`, error);
-        throw new Error(`Failed to generate video for scene: ${scene.sceneNumber}`);
+        console.error(`Error generating ${scene.mood} mood video for scene ${scene.sceneNumber}:`, error);
+        throw new Error(`Failed to generate mood-enhanced video for scene: ${scene.sceneNumber}`);
       }
     }
 
     return sceneVideos;
   }
 
-  // Enhanced family-friendly Disney prompt generation
-  enhancePromptForFamilyFriendlyDisney(basePrompt, sceneContext) {
-    const familyFriendlyKeywords = [
+  // NEW: Get mood-specific motion guidelines
+  getMoodSpecificMotionGuidelines(mood, intensity) {
+    const motionGuidelines = {
+      'serious': `
+        - Steady, controlled camera movements without sudden shifts
+        - Characters move with purpose and dignity
+        - Minimal but meaningful gestures
+        - Camera holds steady on important moments
+        - Transitions are smooth and measured
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'More formal, slower movements' : intensity > 4 ? 'Balanced, professional movements' : 'Gentle, respectful movements'}`,
+      
+      'hopeful': `
+        - Gentle upward camera movements suggesting positivity
+        - Characters have open, welcoming body language
+        - Smooth, flowing movements with positive energy
+        - Camera slowly reveals positive elements
+        - Light, optimistic pacing
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'More dynamic, uplifting movements' : intensity > 4 ? 'Moderate positive energy' : 'Subtle optimistic movements'}`,
+      
+      'concerned': `
+        - Careful, deliberate camera movements
+        - Characters show attentive, caring gestures
+        - Thoughtful pacing without urgency
+        - Camera focuses on expressions of care
+        - Respectful distance and framing
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'More focused, attentive movements' : intensity > 4 ? 'Moderate concern expression' : 'Gentle, caring movements'}`,
+      
+      'urgent': `
+        - Focused, efficient camera movements
+        - Characters move with professional purpose
+        - Alert but controlled pacing
+        - Camera emphasizes important elements
+        - Crisp, clear movements without chaos
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'More dynamic, focused movements' : intensity > 4 ? 'Professional urgency' : 'Controlled, purposeful movements'}`,
+      
+      'informative': `
+        - Stable, clear camera work for comprehension
+        - Characters use clear, educational gestures
+        - Steady pacing supporting information delivery
+        - Camera maintains optimal viewing angles
+        - Professional, accessible movements
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'More demonstrative, clear movements' : intensity > 4 ? 'Standard educational pacing' : 'Gentle, accessible movements'}`,
+      
+      'celebratory': `
+        - Joyful, energetic camera movements
+        - Characters show genuine happiness and celebration
+        - Uplifting, positive pacing
+        - Camera captures celebratory moments
+        - Dynamic but controlled festive energy
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'More energetic, joyful movements' : intensity > 4 ? 'Moderate celebration energy' : 'Gentle, positive movements'}`,
+      
+      'reflective': `
+        - Slow, contemplative camera movements
+        - Characters show thoughtful, introspective gestures
+        - Meditative pacing encouraging reflection
+        - Camera holds on meaningful moments
+        - Peaceful, contemplative flow
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'Deeper, more contemplative movements' : intensity > 4 ? 'Moderate reflection' : 'Gentle, peaceful movements'}`,
+      
+      'professional': `
+        - Business-standard camera movements
+        - Characters maintain professional demeanor
+        - Competent, reliable pacing
+        - Camera supports professional presentation
+        - Standard business-appropriate motion
+        - Intensity ${intensity}/10: ${intensity > 7 ? 'More authoritative, confident movements' : intensity > 4 ? 'Standard professional motion' : 'Gentle, professional movements'}`
+    };
+
+    return motionGuidelines[mood] || motionGuidelines['professional'];
+  }
+
+  // Enhanced mood-specific Disney prompt generation
+  enhancePromptForMoodSpecificDisney(basePrompt, sceneContext, moodConfig) {
+    const moodSpecificKeywords = [
       'Disney/Pixar 3D animation visual style',
-      'positive and constructive',
-      'gentle movements only',
+      `${sceneContext.mood} mood enhancement`,
+      `${sceneContext.emotionalTone} atmosphere`,
+      `mood intensity ${sceneContext.moodIntensity}/10`,
       'high-quality family-friendly rendering',
-      'warm professional lighting',
+      moodConfig.lighting.atmosphere,
       'community cooperation appropriate content',
-      'calm coordination motion',
+      `${sceneContext.mood} motion characteristics`,
       'collaborative teamwork focus',
       'positive civic engagement',
       'constructive professional activities'
     ];
 
-    const gentleCameraKeywords = {
-      'emotional': 'gentle close-up with minimal camera movement showing positive focus',
-      'action': 'slow, steady camera movement following positive coordination activities',
-      'landscape': 'very slow establishing shot showing pleasant community environment',
-      'dialogue': 'static shot with subtle focus on positive conversation',
-      'standard': 'gentle, minimal camera movement highlighting professional cooperation'
+    const moodCameraKeywords = {
+      'emotional': `${sceneContext.mood} close-up with mood-appropriate camera movement`,
+      'action': `${sceneContext.mood} camera movement following positive coordination activities`,
+      'landscape': `${sceneContext.mood} establishing shot showing community environment`,
+      'dialogue': `${sceneContext.mood} shot with focus on positive conversation`,
+      'standard': `${sceneContext.mood} camera movement highlighting professional cooperation`
     };
 
     let enhanced = basePrompt;
-    enhanced += `, ${familyFriendlyKeywords.join(', ')}`;
+    enhanced += `, ${moodSpecificKeywords.join(', ')}`;
     
-    if (sceneContext.mood) {
-      const safeMood = sceneContext.mood.replace(/serious|urgent|concerned/gi, 'focused professional');
-      enhanced += `, positive ${safeMood} coordination atmosphere`;
-    }
-    
-    if (sceneContext.sceneType && gentleCameraKeywords[sceneContext.sceneType]) {
-      enhanced += `, ${gentleCameraKeywords[sceneContext.sceneType]}`;
+    if (sceneContext.sceneType && moodCameraKeywords[sceneContext.sceneType]) {
+      enhanced += `, ${moodCameraKeywords[sceneContext.sceneType]}`;
     }
 
-    enhanced += ', extremely gentle and slow movements emphasizing positive cooperation and community coordination';
+    // Add mood-specific motion characteristics
+    enhanced += `, ${moodConfig.motion.pace} emphasizing ${sceneContext.mood} mood with ${sceneContext.emotionalTone}`;
 
-    // Additional safety sanitization for video generation
-    enhanced = enhanced
-      .replace(/emergency|crisis|urgent/gi, 'coordination')
-      .replace(/investigation|probe|examine/gi, 'planning coordination')
-      .replace(/response|aftermath/gi, 'community coordination')
-      .replace(/concern|worry|anxiety/gi, 'focused attention')
-      .replace(/serious|grave|critical/gi, 'important coordination')
-      .replace(/impact|effect|consequence/gi, 'community coordination result');
+    // Additional mood-specific enhancements
+    enhanced += `, ${moodConfig.keywords.join(' and ')} characteristics with ${sceneContext.moodIntensity}/10 mood intensity`;
 
     return enhanced;
   }
 
-  // Phase 5: Audio Generation (unchanged)
+  // UPDATED: Phase 5: Audio Generation with Mood Integration
   async generateAudioAssets(scenes, overallMood) {
     try {
-      console.log('🎵 Generating audio assets...');
+      console.log('🎵 Generating mood-enhanced audio assets...');
 
-      // Generate narration for each scene
+      // Generate narration for each scene with mood-appropriate voice settings
       const narrationPaths = [];
 
       const voiceIds = [
@@ -1070,17 +1438,40 @@ class AnimationService {
         'pFZP5JQG7iQjIQuC4Bku', // Lily
         'aXbjk4JoIDXdCNz29TrS', // Sunny
         'onwK4e9ZLuTAKqWW03F9' // Daniel
-      ]
-      const selectedVoiceId = voiceIds[Math.floor(Math.random() * voiceIds.length)]
+      ];
+      
+      // Select voice based on overall mood
+      const moodVoiceMapping = {
+        'serious': 'onwK4e9ZLuTAKqWW03F9', // Daniel - more authoritative
+        'hopeful': 'aXbjk4JoIDXdCNz29TrS', // Sunny - optimistic
+        'concerned': 'EXAVITQu4vr4xnSDxMaL', // Sarah - caring
+        'urgent': 'onwK4e9ZLuTAKqWW03F9', // Daniel - clear
+        'informative': 'pFZP5JQG7iQjIQuC4Bku', // Lily - educational
+        'celebratory': 'aXbjk4JoIDXdCNz29TrS', // Sunny - joyful
+        'reflective': 'EXAVITQu4vr4xnSDxMaL', // Sarah - thoughtful
+        'professional': 'onwK4e9ZLuTAKqWW03F9' // Daniel - professional
+      };
+      
+      const selectedVoiceId = moodVoiceMapping[overallMood] || voiceIds[Math.floor(Math.random() * voiceIds.length)];
+      console.log(`🎤 Selected ${overallMood} mood-appropriate voice`);
       
       for (const scene of scenes) {
         if (scene.narration && scene.narration.trim()) {
-          const audioPath = await this.generateVoice(scene.narration, scene.sceneNumber, selectedVoiceId);
+          const audioPath = await this.generateMoodAwareVoice(
+            scene.narration, 
+            scene.sceneNumber, 
+            selectedVoiceId,
+            scene.mood,
+            scene.moodIntensity,
+            scene.emotionalTone
+          );
           if (audioPath) {
             narrationPaths.push({
               sceneNumber: scene.sceneNumber,
               audioPath: audioPath,
-              duration: scene.duration
+              duration: scene.duration,
+              mood: scene.mood,
+              moodIntensity: scene.moodIntensity
             });
           }
         }
@@ -1091,15 +1482,129 @@ class AnimationService {
       };
 
     } catch (error) {
-      console.error('Error generating audio assets:', error);
-      throw new Error('Failed to generate audio assets');
+      console.error('Error generating mood-enhanced audio assets:', error);
+      throw new Error('Failed to generate mood-enhanced audio assets');
     }
+  }
+
+  // NEW: Generate mood-aware voice with appropriate settings
+  async generateMoodAwareVoice(text, sceneNumber, selectedVoiceId, mood, moodIntensity, emotionalTone) {
+    try {
+      console.log(`🎤 Generating ${mood} mood voice for scene ${sceneNumber} (intensity: ${moodIntensity}/10)`);
+      
+      if (!this.elevenLabsApiKey) {
+        console.warn('ElevenLabs API key not found, skipping voice generation');
+        return null;
+      }
+
+      // Get mood configuration for voice settings
+      const moodConfig = this.getMoodConfiguration(mood);
+      
+      // Adjust voice settings based on mood
+      const voiceSettings = this.getMoodVoiceSettings(mood, moodIntensity, moodConfig);
+
+      const response = await axios.post(
+        `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`,
+        {
+          text: text,
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: voiceSettings
+        },
+        {
+          headers: {
+            'Accept': 'audio/mpeg',
+            'Content-Type': 'application/json',
+            'xi-api-key': this.elevenLabsApiKey
+          },
+          responseType: 'arraybuffer'
+        }
+      );
+
+      const audioPath = path.join(this.workingDir, 'audio', `narration_${sceneNumber}_${mood}.mp3`);
+      await fs.writeFile(audioPath, Buffer.from(response.data));
+      
+      console.log(`✅ Generated ${mood} mood voice for scene ${sceneNumber}`);
+      return audioPath;
+
+    } catch (error) {
+      console.error('Error generating mood-aware voice:', error);
+      return null;
+    }
+  }
+
+  // NEW: Get mood-specific voice settings
+  getMoodVoiceSettings(mood, intensity, moodConfig) {
+    const baseMoodSettings = {
+      'serious': {
+        stability: 0.7,
+        similarity_boost: 0.8,
+        style: 0.2,
+        use_speaker_boost: true
+      },
+      'hopeful': {
+        stability: 0.5,
+        similarity_boost: 0.75,
+        style: 0.3,
+        use_speaker_boost: true
+      },
+      'concerned': {
+        stability: 0.6,
+        similarity_boost: 0.8,
+        style: 0.1,
+        use_speaker_boost: true
+      },
+      'urgent': {
+        stability: 0.8,
+        similarity_boost: 0.85,
+        style: 0.4,
+        use_speaker_boost: true
+      },
+      'informative': {
+        stability: 0.75,
+        similarity_boost: 0.8,
+        style: 0.0,
+        use_speaker_boost: true
+      },
+      'celebratory': {
+        stability: 0.4,
+        similarity_boost: 0.7,
+        style: 0.5,
+        use_speaker_boost: true
+      },
+      'reflective': {
+        stability: 0.8,
+        similarity_boost: 0.85,
+        style: 0.1,
+        use_speaker_boost: true
+      },
+      'professional': {
+        stability: 0.75,
+        similarity_boost: 0.8,
+        style: 0.2,
+        use_speaker_boost: true
+      }
+    };
+
+    const settings = baseMoodSettings[mood] || baseMoodSettings['professional'];
+    
+    // Adjust settings based on intensity
+    const intensityFactor = intensity / 10;
+    
+    // Adjust style based on intensity
+    settings.style = Math.min(1.0, settings.style + (intensityFactor * 0.2));
+    
+    // Adjust stability inversely with intensity for more dynamic moods
+    if (['celebratory', 'hopeful', 'urgent'].includes(mood)) {
+      settings.stability = Math.max(0.3, settings.stability - (intensityFactor * 0.2));
+    }
+
+    return settings;
   }
 
   // Phase 6: Updated Video Assembly (unchanged)
   async assembleAnimation(sceneVideos, audioAssets, storyData) {
     try {
-      console.log('🎬 Assembling final animation with audio-video sync and subtitles...');
+      console.log('🎬 Assembling final mood-enhanced animation with audio-video sync and subtitles...');
       
       const processedClipsDir = path.join(this.workingDir, 'processed');
       await fs.mkdir(processedClipsDir, { recursive: true });
@@ -1107,8 +1612,8 @@ class AnimationService {
       const processedClips = [];
       const totalClips = sceneVideos.length;
 
-      // Step 1: Process each scene (trim video to audio length, add subtitles)
-      console.log('📝 Processing individual scenes...');
+      // Step 1: Process each scene with mood information
+      console.log('📝 Processing individual mood-enhanced scenes...');
       
       for (let i = 0; i < sceneVideos.length; i++) {
         const sceneVideo = sceneVideos[i];
@@ -1119,9 +1624,9 @@ class AnimationService {
           continue;
         }
 
-        console.log(`🔧 Processing scene ${sceneVideo.sceneNumber}/${totalClips}...`);
+        console.log(`🔧 Processing ${sceneVideo.mood} mood scene ${sceneVideo.sceneNumber}/${totalClips} (intensity: ${sceneVideo.moodIntensity}/10)...`);
         
-        const processedClipPath = path.join(processedClipsDir, `processed_scene_${sceneVideo.sceneNumber}.mp4`);
+        const processedClipPath = path.join(processedClipsDir, `processed_scene_${sceneVideo.sceneNumber}_${sceneVideo.mood}.mp4`);
         
         // Trim and mux with subtitles
         const actualDuration = await this.trimAndMux({
@@ -1137,10 +1642,12 @@ class AnimationService {
         processedClips.push({
           sceneNumber: sceneVideo.sceneNumber,
           path: processedClipPath,
-          duration: actualDuration
+          duration: actualDuration,
+          mood: sceneVideo.mood,
+          moodIntensity: sceneVideo.moodIntensity
         });
 
-        console.log(`✅ Scene ${sceneVideo.sceneNumber} processed (${actualDuration}s)`);
+        console.log(`✅ ${sceneVideo.mood} mood scene ${sceneVideo.sceneNumber} processed (${actualDuration}s, intensity: ${sceneVideo.moodIntensity}/10)`);
       }
 
       if (processedClips.length === 0) {
@@ -1148,7 +1655,7 @@ class AnimationService {
       }
 
       // Step 2: Create concat file for FFmpeg
-      console.log('🔗 Concatenating processed clips...');
+      console.log('🔗 Concatenating mood-enhanced processed clips...');
       
       const concatFilePath = path.join(this.workingDir, 'concat_list.txt');
       const concatContent = processedClips
@@ -1157,10 +1664,10 @@ class AnimationService {
         .join('\n');
       
       writeFileSync(concatFilePath, concatContent, 'utf8');
-      console.log(`📋 Concat file created with ${processedClips.length} clips`);
+      console.log(`📋 Concat file created with ${processedClips.length} mood-enhanced clips`);
 
       // Step 3: Concatenate all processed clips
-      const outputPath = path.join(this.workingDir, `animation_${uuidv4()}.mp4`);
+      const outputPath = path.join(this.workingDir, `mood_enhanced_animation_${uuidv4()}.mp4`);
       
       return new Promise((resolve, reject) => {
         const ffArgs = [
@@ -1172,7 +1679,7 @@ class AnimationService {
           outputPath
         ];
 
-        console.log(`🎞️ Final concatenation: ffmpeg ${ffArgs.join(' ')}`);
+        console.log(`🎞️ Final mood-enhanced concatenation: ffmpeg ${ffArgs.join(' ')}`);
 
         const { status, error } = spawnSync('ffmpeg', ffArgs, { stdio: 'inherit' });
         
@@ -1190,23 +1697,25 @@ class AnimationService {
         }
 
         const totalDuration = processedClips.reduce((sum, clip) => sum + clip.duration, 0);
-        console.log(`✅ Animation assembly completed! Total duration: ${totalDuration.toFixed(1)}s`);
+        const moodProgression = processedClips.map(clip => `${clip.mood}(${clip.moodIntensity}/10)`).join(' → ');
+        
+        console.log(`✅ Mood-enhanced animation assembly completed! Total duration: ${totalDuration.toFixed(1)}s`);
+        console.log(`🎭 Mood progression: ${moodProgression}`);
         console.log(`📁 Output: ${outputPath}`);
         
         resolve(outputPath);
       });
 
     } catch (error) {
-      console.error('❌ Error assembling animation:', error);
-      throw new Error(`Failed to assemble animation: ${error.message}`);
+      console.error('❌ Error assembling mood-enhanced animation:', error);
+      throw new Error(`Failed to assemble mood-enhanced animation: ${error.message}`);
     }
   }
 
-  // INTELLIGENT: Story-Aware Content Adaptation (preserves story integrity while ensuring visual safety)
+  // Content safety methods (unchanged but with mood awareness)
   sanitizeSceneForContentPolicy(sceneDescription, sceneType) {
     // Determine story type to apply appropriate visual adaptations
     const storyType = this.detectStoryType(sceneDescription);
-    console.log("Story Type", storyType)
     
     let sanitizedDescription = sceneDescription;
     let wasModified = false;
@@ -1278,10 +1787,9 @@ class AnimationService {
     return 'general';
   }
 
-  // Adapt crime story visuals (show investigation/aftermath, not the crime itself)
+  // Content adaptation methods (unchanged)
   adaptCrimeSceneVisuals(description) {
     const crimeVisualAdaptations = {
-      // Replace direct crime depictions with investigation/aftermath
       'murder scene': 'police investigation area with evidence markers',
       'shooting': 'police investigation with officers documenting the scene',
       'robbery in progress': 'police officers interviewing witnesses',
@@ -1303,7 +1811,6 @@ class AnimationService {
     let adaptedDescription = description;
     let wasModified = false;
 
-    // Apply visual adaptations while preserving story context
     for (const [crimeVisual, safeVisual] of Object.entries(crimeVisualAdaptations)) {
       const regex = new RegExp(crimeVisual, 'gi');
       if (regex.test(adaptedDescription)) {
@@ -1312,7 +1819,6 @@ class AnimationService {
       }
     }
 
-    // Focus on investigation and response rather than the crime action
     adaptedDescription = adaptedDescription
       .replace(/\b(committing|performing|executing)\s+(a\s+)?(crime|murder|robbery)\b/gi, 'investigating the reported incident')
       .replace(/\b(during|while)\s+the\s+(attack|assault|crime)\b/gi, 'during the investigation')
@@ -1322,7 +1828,6 @@ class AnimationService {
     return { sanitizedDescription: adaptedDescription, wasModified };
   }
 
-  // Adapt accident story visuals (show response/aftermath, not the accident moment)
   adaptAccidentSceneVisuals(description) {
     const accidentVisualAdaptations = {
       'car crash': 'emergency responders at the accident site',
@@ -1353,7 +1858,6 @@ class AnimationService {
     return { sanitizedDescription: adaptedDescription, wasModified };
   }
 
-  // Adapt conflict story visuals (show dialogue/peaceful resolution, not confrontation)
   adaptConflictSceneVisuals(description) {
     const conflictVisualAdaptations = {
       'violent protest': 'peaceful demonstration with community leaders',
@@ -1382,7 +1886,6 @@ class AnimationService {
     return { sanitizedDescription: adaptedDescription, wasModified };
   }
 
-  // Adapt emergency story visuals (show response/coordination, not the emergency itself)
   adaptEmergencySceneVisuals(description) {
     const emergencyVisualAdaptations = {
       'building on fire': 'firefighters coordinating response at the building',
@@ -1409,7 +1912,6 @@ class AnimationService {
     return { sanitizedDescription: adaptedDescription, wasModified };
   }
 
-  // Adapt investigation story visuals (show professional procedures)
   adaptInvestigationSceneVisuals(description) {
     const investigationVisualAdaptations = {
       'crime scene': 'investigation area with professional documentation',
@@ -1458,7 +1960,7 @@ class AnimationService {
     return { sanitizedDescription: adaptedDescription, wasModified };
   }
 
-  // Helper methods (unchanged)
+  // Helper methods (enhanced with mood awareness)
   async generateImage(prompt) {
     try {
       const response = await this.openai.images.generate({
@@ -1521,46 +2023,6 @@ class AnimationService {
     }
   }
 
-  async generateVoice(text, sceneNumber, selectedVoiceId) {
-    try {
-        console.log("This is text", text)
-      if (!this.elevenLabsApiKey) {
-        console.warn('ElevenLabs API key not found, skipping voice generation');
-        return null;
-      }
-
-      const response = await axios.post(
-        `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`,
-        {
-          text: text,
-          model_id: 'eleven_multilingual_v2',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0.0,
-            use_speaker_boost: true
-          }
-        },
-        {
-          headers: {
-            'Accept': 'audio/mpeg',
-            'Content-Type': 'application/json',
-            'xi-api-key': this.elevenLabsApiKey
-          },
-          responseType: 'arraybuffer'
-        }
-      );
-
-      const audioPath = path.join(this.workingDir, 'audio', `narration_${sceneNumber}.mp3`);
-      await fs.writeFile(audioPath, Buffer.from(response.data));
-      return audioPath;
-
-    } catch (error) {
-      console.error('Error generating voice:', error);
-      return null;
-    }
-  }
-
   async generateBackgroundMusic(mood, duration) {
     try {
       const musicPath = path.join(this.workingDir, 'audio', 'background_music.mp3');
@@ -1584,12 +2046,6 @@ class AnimationService {
 
   async convertLocalImageForKlingAI(localImagePath) {
     try {
-    //   if (this.imagekitApiKey && this.imagekitPrivateKey && this.imagekitEndpoint) {
-    //     const tempFileName = `temp_${uuidv4()}.png`;
-    //     const tempUrl = await this.uploadToImageKit(localImagePath, tempFileName);
-    //     return tempUrl;
-    //   }
-      
       const imageBuffer = await fs.readFile(localImagePath);
       const base64Data = imageBuffer.toString('base64');
       return `data:image/png;base64,${base64Data}`;
@@ -1670,17 +2126,26 @@ class AnimationService {
 
   async saveAnimationToDatabase(animationData, finalVideoUrl) {
     try {
+      // Enhanced animation data with mood information
       const animation = new Animation({
         title: animationData.title,
         theme: animationData.theme,
         article: animationData.originalArticle,
         sceneCount: animationData.scenes.length,
         characters: animationData.characters,
-        scenes: animationData.scenes,
+        scenes: animationData.scenes.map(scene => ({
+          ...scene,
+          mood: scene.mood,
+          moodIntensity: scene.moodIntensity || 5,
+          emotionalTone: scene.emotionalTone || scene.mood
+        })),
         videoUrl: finalVideoUrl,
         status: 'completed',
         generatedAt: new Date(),
-        processingTime: animationData.processingTime
+        processingTime: animationData.processingTime,
+        overallMood: animationData.overallMood,
+        moodProgression: animationData.moodProgression || [],
+        countryContext: animationData.countryContext
       });
 
       await animation.save();
@@ -1692,72 +2157,78 @@ class AnimationService {
     }
   }
 
-  // UPDATED: Main pipeline execution with country context
+  // UPDATED: Main pipeline execution with comprehensive mood integration
   async generateAnimation(article, sceneCount) {
     const startTime = Date.now();
     let finalVideoPath = null;
     
     try {
-      console.log('🎬 Starting country-aware family-friendly Disney animation generation pipeline with detailed scenes, minimal text, and comprehensive content safety...');
+      console.log('🎬 Starting comprehensive mood-enhanced Disney animation generation pipeline...');
       console.log(`📄 Article length: ${article.length} characters`);
       console.log(`🎭 Scenes to generate: ${sceneCount}`);
 
-      // Phase 1: Story Development with Country Detection
-      console.log('\n📝 Phase 1: Generating country-aware story structure...');
+      // Phase 1: Story Development with Enhanced Mood Integration
+      console.log('\n📝 Phase 1: Generating mood-enhanced story structure...');
       const storyData = await this.generateStoryStructure(article, sceneCount);
       storyData.originalArticle = article;
       console.log(`✅ Story created: "${storyData.title}"`);
       console.log(`🌍 Country context: ${storyData.countryContext.primaryCountry}`);
+      console.log(`🎭 Overall mood: ${storyData.overallMood}`);
+      console.log(`🎬 Mood progression: ${storyData.scenes.map(s => `${s.mood}(${s.moodIntensity}/10)`).join(' → ')}`);
 
-      // Phase 2: Character Generation with Country Context
-      console.log('\n🎭 Phase 2: Generating country-appropriate character assets...');
+      // Phase 2: Character Generation with Mood Capabilities
+      console.log('\n🎭 Phase 2: Generating mood-capable character assets...');
       const characterAssets = await this.generateCharacterAssets(storyData.characters, storyData.countryContext);
-      console.log(`✅ Generated ${Object.keys(characterAssets).length} characters for ${storyData.countryContext.primaryCountry}`);
+      console.log(`✅ Generated ${Object.keys(characterAssets).length} mood-capable characters for ${storyData.countryContext.primaryCountry}`);
 
-      // Phase 3: Scene Generation with Country Context and Minimal Text
-      console.log('\n🖼️ Phase 3: Generating country-authentic detailed scene images with minimal text...');
+      // Phase 3: Scene Generation with Comprehensive Mood Enhancement
+      console.log('\n🖼️ Phase 3: Generating mood-enhanced scene images...');
       const sceneImages = await this.generateSceneImages(storyData.scenes, characterAssets, storyData.countryContext);
-      console.log(`✅ Generated ${sceneImages.length} ${storyData.countryContext.primaryCountry}-authentic detailed scene images with minimal text`);
+      console.log(`✅ Generated ${sceneImages.length} mood-enhanced scene images`);
 
-      // Phase 4: Video Generation
-      console.log('\n🎥 Phase 4: Generating scene videos with Kling AI...');
+      // Phase 4: Video Generation with Mood-Specific Motion
+      console.log('\n🎥 Phase 4: Generating mood-specific scene videos...');
       const sceneVideos = await this.generateSceneVideos(sceneImages);
-      console.log(`✅ Generated ${sceneVideos.length} scene videos`);
+      console.log(`✅ Generated ${sceneVideos.length} mood-enhanced scene videos`);
 
-      // Phase 5: Audio Generation
-      console.log('\n🎵 Phase 5: Generating audio assets...');
+      // Phase 5: Audio Generation with Mood-Appropriate Voice Settings
+      console.log('\n🎵 Phase 5: Generating mood-enhanced audio assets...');
       const audioAssets = await this.generateAudioAssets(storyData.scenes, storyData.overallMood);
-      console.log(`✅ Generated audio for ${audioAssets.narration.length} scenes`);
+      console.log(`✅ Generated mood-appropriate audio for ${audioAssets.narration.length} scenes`);
 
-      // Phase 6: Video Assembly with Audio-Video Sync and Subtitles
-      console.log('\n🎬 Phase 6: Assembling final animation with audio sync and subtitles...');
+      // Phase 6: Video Assembly with Mood Progression
+      console.log('\n🎬 Phase 6: Assembling final mood-enhanced animation...');
       finalVideoPath = await this.assembleAnimation(sceneVideos, audioAssets, storyData);
-      console.log('✅ Animation assembly completed', finalVideoPath);
+      console.log('✅ Mood-enhanced animation assembly completed', finalVideoPath);
 
       // Save to permanent location
       const outputDir = path.join(process.cwd(), 'public', 'animations');
       await fs.mkdir(outputDir, { recursive: true });
       
-      const permanentVideoFileName = `animation_${Date.now()}_${uuidv4()}.mp4`;
+      const permanentVideoFileName = `mood_animation_${Date.now()}_${uuidv4()}.mp4`;
       const permanentVideoPath = path.join(outputDir, permanentVideoFileName);
       
       // Copy final video to permanent location
       await fs.copyFile(finalVideoPath, permanentVideoPath);
-      console.log(`📁 Final video saved to: ${permanentVideoPath}`);
+      console.log(`📁 Final mood-enhanced video saved to: ${permanentVideoPath}`);
 
-      // Save to database with local file path
+      // Save to database with mood information
       const processingTime = Date.now() - startTime;
       storyData.processingTime = processingTime;
       
       const animationRecord = await this.saveAnimationToDatabase(storyData, permanentVideoPath);
 
-      console.log(`\n🎉 Country-aware family-friendly animation generation with detailed scenes and minimal text completed successfully!`);
+      console.log(`\n🎉 Comprehensive mood-enhanced animation generation completed successfully!`);
       console.log(`🌍 Generated for: ${storyData.countryContext.primaryCountry}${storyData.countryContext.primaryCity ? ` (${storyData.countryContext.primaryCity})` : ''}`);
-      console.log(`📝 Text content minimized for clean visual composition`);
-      console.log(`🎬 Detailed family-friendly scene descriptions used for enhanced image control`);
-      console.log(`🛡️ All content optimized for comprehensive content safety compliance`);
+      console.log(`🎭 Overall mood: ${storyData.overallMood}`);
+      console.log(`🎬 Mood progression: ${storyData.scenes.map(s => `${s.mood}(${s.moodIntensity}/10)`).join(' → ')}`);
+      console.log(`🎨 Mood-specific visual and audio treatment applied throughout`);
+      console.log(`🛡️ Content safety with mood preservation maintained`);
       console.log(`⏱️ Total processing time: ${(processingTime / 1000 / 60).toFixed(1)} minutes`);
       console.log(`📂 Final video path: ${permanentVideoPath}`);
+
+      console.log("Cleaning Up Temp Files")
+      await this.cleanupTempFiles()
       
       return {
         success: true,
@@ -1767,26 +2238,34 @@ class AnimationService {
         title: storyData.title,
         processingTime: processingTime,
         sceneCount: storyData.scenes.length,
-        countryContext: storyData.countryContext
+        countryContext: storyData.countryContext,
+        overallMood: storyData.overallMood,
+        moodProgression: storyData.scenes.map(s => ({
+          sceneNumber: s.sceneNumber,
+          mood: s.mood,
+          intensity: s.moodIntensity,
+          emotionalTone: s.emotionalTone
+        })),
+        moodEnhanced: true
       };
 
     } catch (error) {
-        console.error('❌ Animation generation failed:', error);
+      console.error('❌ Mood-enhanced animation generation failed:', error);
       
-        // Cleanup on error (but preserve permanent video if it exists)
-        if (finalVideoPath) {
-          try {
-            // Only delete the temp video if it exists and is different from permanent location
-            const outputDir = path.join(process.cwd(), 'public', 'animations');
-            if (!finalVideoPath.startsWith(outputDir)) {
-              await fs.unlink(finalVideoPath);
-            }
-          } catch (cleanupError) {
-            console.error('Error cleaning up video file:', cleanupError);
+      // Cleanup on error (but preserve permanent video if it exists)
+      if (finalVideoPath) {
+        try {
+          // Only delete the temp video if it exists and is different from permanent location
+          const outputDir = path.join(process.cwd(), 'public', 'animations');
+          if (!finalVideoPath.startsWith(outputDir)) {
+            await fs.unlink(finalVideoPath);
           }
+        } catch (cleanupError) {
+          console.error('Error cleaning up video file:', cleanupError);
         }
-        
-        throw new Error(`Animation generation failed: ${error.message}`);
+      }
+      
+      throw new Error(`Mood-enhanced animation generation failed: ${error.message}`);
     }
   }
 

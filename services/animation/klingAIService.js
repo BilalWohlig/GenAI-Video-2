@@ -1,4 +1,4 @@
-// services/animation/klingAIService.js
+// services/animation/klingAIService.js - Enhanced with mood support
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
@@ -17,7 +17,6 @@ class KlingAIService {
     if (this.replicateApiToken) {
       this.replicate = new Replicate({
         auth: this.replicateApiToken,
-        // userAgent: 'Disney-Animation-Service/1.0'
       });
     }
     
@@ -39,6 +38,123 @@ class KlingAIService {
         download: 300000
       }
     };
+
+    // Mood-specific generation settings
+    this.moodSettings = {
+      'serious': {
+        cfg_scale: 0.6,
+        preferredMode: 'std',
+        cameraStyle: 'steady',
+        motionIntensity: 'controlled'
+      },
+      'hopeful': {
+        cfg_scale: 0.4,
+        preferredMode: 'std',
+        cameraStyle: 'gentle_upward',
+        motionIntensity: 'flowing'
+      },
+      'concerned': {
+        cfg_scale: 0.5,
+        preferredMode: 'std',
+        cameraStyle: 'careful',
+        motionIntensity: 'thoughtful'
+      },
+      'urgent': {
+        cfg_scale: 0.7,
+        preferredMode: 'std',
+        cameraStyle: 'focused',
+        motionIntensity: 'efficient'
+      },
+      'informative': {
+        cfg_scale: 0.3,
+        preferredMode: 'std',
+        cameraStyle: 'stable',
+        motionIntensity: 'clear'
+      },
+      'celebratory': {
+        cfg_scale: 0.4,
+        preferredMode: 'std',
+        cameraStyle: 'dynamic',
+        motionIntensity: 'joyful'
+      },
+      'reflective': {
+        cfg_scale: 0.6,
+        preferredMode: 'std',
+        cameraStyle: 'slow',
+        motionIntensity: 'contemplative'
+      },
+      'professional': {
+        cfg_scale: 0.5,
+        preferredMode: 'std',
+        cameraStyle: 'business_standard',
+        motionIntensity: 'competent'
+      }
+    };
+    // this.moodSettings = {
+    //   'serious': {
+    //     cfg_scale: 0.6,
+    //     preferredMode: 'pro',
+    //     cameraStyle: 'steady',
+    //     motionIntensity: 'controlled'
+    //   },
+    //   'hopeful': {
+    //     cfg_scale: 0.4,
+    //     preferredMode: 'std',
+    //     cameraStyle: 'gentle_upward',
+    //     motionIntensity: 'flowing'
+    //   },
+    //   'concerned': {
+    //     cfg_scale: 0.5,
+    //     preferredMode: 'pro',
+    //     cameraStyle: 'careful',
+    //     motionIntensity: 'thoughtful'
+    //   },
+    //   'urgent': {
+    //     cfg_scale: 0.7,
+    //     preferredMode: 'pro',
+    //     cameraStyle: 'focused',
+    //     motionIntensity: 'efficient'
+    //   },
+    //   'informative': {
+    //     cfg_scale: 0.3,
+    //     preferredMode: 'std',
+    //     cameraStyle: 'stable',
+    //     motionIntensity: 'clear'
+    //   },
+    //   'celebratory': {
+    //     cfg_scale: 0.4,
+    //     preferredMode: 'std',
+    //     cameraStyle: 'dynamic',
+    //     motionIntensity: 'joyful'
+    //   },
+    //   'reflective': {
+    //     cfg_scale: 0.6,
+    //     preferredMode: 'pro',
+    //     cameraStyle: 'slow',
+    //     motionIntensity: 'contemplative'
+    //   },
+    //   'professional': {
+    //     cfg_scale: 0.5,
+    //     preferredMode: 'pro',
+    //     cameraStyle: 'business_standard',
+    //     motionIntensity: 'competent'
+    //   }
+    // };
+  }
+
+  // Get mood-specific settings
+  getMoodSettings(mood, moodIntensity = 5) {
+    const baseMoodSettings = this.moodSettings[mood] || this.moodSettings['professional'];
+    
+    // Adjust settings based on mood intensity (1-10 scale)
+    const intensityFactor = moodIntensity / 10;
+    
+    return {
+      ...baseMoodSettings,
+      cfg_scale: Math.min(1.0, baseMoodSettings.cfg_scale + (intensityFactor * 0.2)),
+      moodIntensity: moodIntensity,
+      intensityFactor: intensityFactor
+    };
   }
 
   // Validate credentials
@@ -49,51 +165,129 @@ class KlingAIService {
     return true;
   }
 
-  // Generate video using Replicate (Primary method)
-  async generateVideoViaReplicate(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std') {
+  // Generate video using Replicate with mood support (Primary method)
+  async generateVideoViaReplicate(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std', mood = 'professional', moodIntensity = 5) {
     try {
       if (!this.replicateApiToken) {
         throw new Error('Replicate API token not available');
       }
 
-      console.log('🚀 Attempting video generation via Replicate...');
+      console.log(`🚀 Attempting ${mood} mood video generation via Replicate (intensity: ${moodIntensity}/10)...`);
       console.log(`   Image: ${imageUrl.substring(0, 50)}...`);
       console.log(`   Prompt: ${prompt}`);
-      console.log(`   Duration: 10s, Mode: ${mode}`);
+      console.log(`   Duration: 10s, Mode: ${mode}, Mood: ${mood}`);
 
-      // Choose model based on mode
-      const model = mode === 'pro' 
+      // Get mood-specific settings
+      const moodSettings = this.getMoodSettings(mood, moodIntensity);
+
+      // Choose model based on mode and mood preferences
+      const model = moodSettings.preferredMode === 'pro' 
         ? 'kwaivgi/kling-v1.6-pro:03b02153924ef65cd57b7e561f3a4ed66db11c34218d2c70a8af198987edfa3d'
         : 'kwaivgi/kling-v1.6-standard';
 
+      // Enhance prompt with mood-specific motion characteristics
+      const moodEnhancedPrompt = this.enhancePromptWithMoodCharacteristics(prompt, mood, moodSettings);
+
       const input = {
-        prompt: prompt,
+        prompt: moodEnhancedPrompt,
         duration: 10,
-        cfg_scale: 0.5,
+        cfg_scale: moodSettings.cfg_scale,
         start_image: imageUrl,
         aspect_ratio: aspectRatio,
-        negative_prompt: ''
+        negative_prompt: this.getMoodSpecificNegativePrompt(mood)
       };
 
-      console.log(`🎬 Using Replicate model: ${model.split(':')[0]}`);
+      console.log(`🎬 Using Replicate model: ${model.split(':')[0]} with ${mood} mood optimization`);
       
       const output = await this.replicate.run(model, { input });
       const replicateVideoUrl = output.url().href
       
-      console.log('✅ Replicate video generation successful!');
+      console.log(`✅ ${mood} mood Replicate video generation successful!`);
       console.log(`   Video URL: ${replicateVideoUrl}`);
 
       return {
         success: true,
         videoUrl: replicateVideoUrl,
         duration: 10,
-        method: 'replicate'
+        method: 'replicate',
+        mood: mood,
+        moodIntensity: moodIntensity
       };
 
     } catch (error) {
-      console.error('❌ Replicate video generation failed:', error.message);
+      console.error(`❌ ${mood} mood Replicate video generation failed:`, error.message);
       throw error;
     }
+  }
+
+  // Enhance prompt with mood characteristics
+  enhancePromptWithMoodCharacteristics(basePrompt, mood, moodSettings) {
+    const moodMotionDescriptors = {
+      'serious': 'steady, controlled movements, professional camera work, dignified pacing',
+      'hopeful': 'gentle upward movements, optimistic camera flow, positive energy',
+      'concerned': 'careful, thoughtful movements, respectful camera work, considerate pacing',
+      'urgent': 'focused, efficient movements, alert camera work, purposeful pacing',
+      'informative': 'stable, clear movements, educational camera work, accessible pacing',
+      'celebratory': 'joyful, dynamic movements, celebratory camera work, energetic pacing',
+      'reflective': 'slow, contemplative movements, meditative camera work, peaceful pacing',
+      'professional': 'business-standard movements, competent camera work, reliable pacing'
+    };
+
+    const moodCameraWork = {
+      'serious': 'steady camera, minimal movement, professional framing',
+      'hopeful': 'gentle upward camera movement, optimistic angles',
+      'concerned': 'careful camera positioning, respectful framing',
+      'urgent': 'focused camera work, efficient movements',
+      'informative': 'stable camera, clear educational shots',
+      'celebratory': 'dynamic camera work, joyful movements',
+      'reflective': 'slow camera movements, contemplative shots',
+      'professional': 'business-standard camera work, competent framing'
+    };
+
+    let enhanced = basePrompt;
+    
+    // Add mood-specific motion descriptors
+    if (moodMotionDescriptors[mood]) {
+      enhanced += `, ${moodMotionDescriptors[mood]}`;
+    }
+    
+    // Add mood-specific camera work
+    if (moodCameraWork[mood]) {
+      enhanced += `, ${moodCameraWork[mood]}`;
+    }
+    
+    // Add intensity-based modifications
+    const intensityDescriptors = {
+      low: 'subtle, gentle',
+      medium: 'balanced, moderate',
+      high: 'pronounced, dynamic'
+    };
+    
+    const intensityLevel = moodSettings.moodIntensity <= 3 ? 'low' : 
+                          moodSettings.moodIntensity <= 7 ? 'medium' : 'high';
+    
+    enhanced += `, ${intensityDescriptors[intensityLevel]} ${mood} mood expression`;
+    
+    return enhanced;
+  }
+
+  // Get mood-specific negative prompts
+  getMoodSpecificNegativePrompt(mood) {
+    const baseMoodNegatives = {
+      'serious': 'chaotic movement, sudden changes, unprofessional behavior, casual atmosphere',
+      'hopeful': 'negative expressions, downward movement, pessimistic atmosphere, dark mood',
+      'concerned': 'careless behavior, rushed movements, insensitive actions, dismissive attitude',
+      'urgent': 'chaotic panic, disorganized movement, unprofessional urgency, frantic behavior',
+      'informative': 'confusing movements, unclear presentation, distracting elements, poor visibility',
+      'celebratory': 'sad expressions, downward movement, negative atmosphere, somber mood',
+      'reflective': 'rushed movements, chaotic activity, distracting elements, agitated behavior',
+      'professional': 'unprofessional behavior, casual atmosphere, sloppy presentation, informal conduct'
+    };
+
+    const baseNegative = 'low quality, blurry, distorted, violent content, inappropriate material, text overlays';
+    const moodSpecific = baseMoodNegatives[mood] || baseMoodNegatives['professional'];
+    
+    return `${baseNegative}, ${moodSpecific}`;
   }
 
   // Generate JWT token for authentication
@@ -129,7 +323,6 @@ class KlingAIService {
     return {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
-    //   'User-Agent': 'Disney-Animation-Service/1.0'
     };
   }
 
@@ -213,7 +406,6 @@ class KlingAIService {
       const token = this.generateJWTToken();
       const headers = {
         'Authorization': `Bearer ${token}`,
-        'User-Agent': 'Disney-Animation-Service/1.0',
         ...formData.getHeaders()
       };
 
@@ -235,82 +427,91 @@ class KlingAIService {
     }
   }
 
-  // Generate video from image (Updated with Replicate + Fallback)
-  async generateVideo(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std') {
+  // UPDATED: Generate video from image with mood support
+  async generateVideo(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std', mood = 'professional', moodIntensity = 5) {
     try {
-      // First attempt: Try Replicate
+      // First attempt: Try Replicate with mood support
       try {
-        console.log('🎯 Primary attempt: Using Replicate API...');
-        return await this.generateVideoViaReplicate(imageUrl, prompt, duration, aspectRatio, mode);
+        console.log(`🎯 Primary attempt: Using Replicate API with ${mood} mood...`);
+        return await this.generateVideoViaReplicate(imageUrl, prompt, duration, aspectRatio, mode, mood, moodIntensity);
       } catch (replicateError) {
-        console.warn('⚠️ Replicate failed, falling back to direct Kling AI API');
+        console.warn(`⚠️ Replicate failed for ${mood} mood, falling back to direct Kling AI API`);
         console.warn(`   Replicate error: ${replicateError.message}`);
       }
 
-      // Fallback: Use direct Kling AI API
-      console.log('🔄 Fallback: Using direct Kling AI API...');
-      return await this.generateVideoViaDirect(imageUrl, prompt, duration, aspectRatio, mode);
+      // Fallback: Use direct Kling AI API with mood support
+      console.log(`🔄 Fallback: Using direct Kling AI API with ${mood} mood...`);
+      return await this.generateVideoViaDirect(imageUrl, prompt, duration, aspectRatio, mode, mood, moodIntensity);
 
     } catch (error) {
-      console.error('❌ All video generation methods failed:', error.message);
-      throw new Error(`Failed to generate video: ${error.message}`);
+      console.error(`❌ All ${mood} mood video generation methods failed:`, error.message);
+      throw new Error(`Failed to generate ${mood} mood video: ${error.message}`);
     }
   }
 
-  // Generate video via direct Kling AI API (Fallback method)
-  async generateVideoViaDirect(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std') {
+  // UPDATED: Generate video via direct Kling AI API with mood support
+  async generateVideoViaDirect(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std', mood = 'professional', moodIntensity = 5) {
     try {
-      console.log('🎬 Generating video with direct Kling AI API...');
-      console.log(`   Prompt: ${prompt}`);
-      console.log(`   Duration: 10s, Mode: ${mode}`);
+      console.log(`🎬 Generating ${mood} mood video with direct Kling AI API (intensity: ${moodIntensity}/10)...`);
 
-    //   const uploadedImageUrl = await this.uploadImage(imageUrl);
+      // Get mood-specific settings
+      const moodSettings = this.getMoodSettings(mood, moodIntensity);
+      
+      // Enhance prompt with mood characteristics
+      const moodEnhancedPrompt = this.enhancePromptWithMoodCharacteristics(prompt, mood, moodSettings);
 
       const requestBody = {
         model_name: 'kling-v1-6',
         image: imageUrl,
-        prompt: prompt,
+        prompt: moodEnhancedPrompt,
         duration: "10",
-        mode: mode,
-        cfg_scale: 0.5
+        mode: moodSettings.preferredMode,
+        cfg_scale: moodSettings.cfg_scale
       };
 
       const response = await this.makeAuthenticatedRequest('POST', '/videos/image2video', requestBody);
 
       if (response.code === 0) {
         const taskId = response.data.task_id;
-        console.log(`✅ Direct API video generation started with task ID: ${taskId}`);
+        console.log(`✅ Direct API ${mood} mood video generation started with task ID: ${taskId}`);
         
         const result = await this.pollVideoGeneration(taskId);
         return {
           ...result,
-          method: 'direct_api'
+          method: 'direct_api',
+          mood: mood,
+          moodIntensity: moodIntensity
         };
       } else {
-        throw new Error(`Video generation failed: ${response.message}`);
+        throw new Error(`${mood} mood video generation failed: ${response.message}`);
       }
 
     } catch (error) {
-      console.error('❌ Direct API video generation error:', error.message);
-      throw new Error(`Failed to generate video via direct API: ${error.message}`);
+      console.error(`❌ Direct API ${mood} mood video generation error:`, error.message);
+      throw new Error(`Failed to generate ${mood} mood video via direct API: ${error.message}`);
     }
   }
 
-  // Generate video with camera controls (Updated with Replicate + Fallback)
-  async generateVideoWithCameraControl(imageUrl, prompt, duration = 5, cameraControl = {}) {
+  // UPDATED: Generate video with camera controls and mood support
+  async generateVideoWithCameraControl(imageUrl, prompt, duration = 5, cameraControl = {}, mood = 'professional', moodIntensity = 5) {
     try {
-      // First attempt: Try Replicate (camera controls may not be supported)
+      // First attempt: Try Replicate with mood-enhanced prompt
       try {
-        console.log('🎯 Primary attempt: Using Replicate API with enhanced prompt...');
+        console.log(`🎯 Primary attempt: Using Replicate API with ${mood} mood and enhanced camera control...`);
         
-        // Enhance prompt with camera control descriptions since Replicate may not support camera controls directly
+        // Get mood settings
+        const moodSettings = this.getMoodSettings(mood, moodIntensity);
+        
+        // Enhance prompt with both camera control and mood characteristics
         let enhancedPrompt = prompt;
         if (cameraControl.config && !cameraControl.config.tilt) {
           const cameraDescriptions = {
-            'pan': 'smooth panning camera movement',
-            'zoom': cameraControl.config.zoom > 0 ? 'slow zoom in camera movement' : 'slow zoom out camera movement',
-            'horizontal': 'horizontal camera movement',
-            'vertical': 'vertical camera movement'
+            'pan': `smooth panning camera movement with ${mood} mood characteristics`,
+            'zoom': cameraControl.config.zoom > 0 ? 
+              `slow zoom in camera movement emphasizing ${mood} mood` : 
+              `slow zoom out camera movement maintaining ${mood} mood`,
+            'horizontal': `horizontal camera movement with ${mood} pacing`,
+            'vertical': `vertical camera movement reflecting ${mood} energy`
           };
           
           if (cameraDescriptions[cameraControl.type]) {
@@ -318,39 +519,43 @@ class KlingAIService {
           }
         }
         
-        return await this.generateVideoViaReplicate(imageUrl, enhancedPrompt, duration, '16:9', 'std');
+        return await this.generateVideoViaReplicate(imageUrl, enhancedPrompt, duration, '16:9', 'std', mood, moodIntensity);
       } catch (replicateError) {
-        console.warn('⚠️ Replicate failed, falling back to direct Kling AI API with camera controls');
+        console.warn(`⚠️ Replicate failed for ${mood} mood camera control, falling back to direct Kling AI API`);
         console.warn(`   Replicate error: ${replicateError.message}`);
       }
 
-      // Fallback: Use direct Kling AI API with camera controls
-      console.log('🔄 Fallback: Using direct Kling AI API with camera controls...');
-      return await this.generateVideoWithCameraControlDirect(imageUrl, prompt, duration, cameraControl);
+      // Fallback: Use direct Kling AI API with camera controls and mood
+      console.log(`🔄 Fallback: Using direct Kling AI API with ${mood} mood camera controls...`);
+      return await this.generateVideoWithCameraControlDirect(imageUrl, prompt, duration, cameraControl, mood, moodIntensity);
 
     } catch (error) {
-      console.error('❌ All camera control video generation methods failed:', error.message);
-      throw new Error(`Failed to generate video with camera control: ${error.message}`);
+      console.error(`❌ All ${mood} mood camera control video generation methods failed:`, error.message);
+      throw new Error(`Failed to generate ${mood} mood video with camera control: ${error.message}`);
     }
   }
 
-  // Generate video with camera controls via direct API (Fallback method)
-  async generateVideoWithCameraControlDirect(imageUrl, prompt, duration = 5, cameraControl = {}) {
+  // UPDATED: Generate video with camera controls via direct API with mood
+  async generateVideoWithCameraControlDirect(imageUrl, prompt, duration = 5, cameraControl = {}, mood = 'professional', moodIntensity = 5) {
     try {
-      console.log('🎥 Generating video with camera controls via direct API...');
+      console.log(`🎥 Generating ${mood} mood video with camera controls via direct API (intensity: ${moodIntensity}/10)...`);
       
-    //   const uploadedImageUrl = await this.uploadImage(imageUrl);
+      // Get mood-specific settings
+      const moodSettings = this.getMoodSettings(mood, moodIntensity);
+      
+      // Enhance prompt with mood characteristics
+      const moodEnhancedPrompt = this.enhancePromptWithMoodCharacteristics(prompt, mood, moodSettings);
 
       const requestBody = {
         model_name: 'kling-v1-6',
         image: imageUrl,
-        prompt: prompt,
+        prompt: moodEnhancedPrompt,
         duration: "10",
-        mode: 'pro',
-        cfg_scale: 0.5
+        mode: 'pro', // Camera controls typically require pro mode
+        cfg_scale: moodSettings.cfg_scale
       };
 
-      // Add camera control if provided
+      // Add camera control if provided and compatible with mood
       if (cameraControl.config && !cameraControl.config.tilt) {
         requestBody.camera_control = cameraControl;
       }
@@ -361,15 +566,17 @@ class KlingAIService {
         const result = await this.pollVideoGeneration(response.data.task_id);
         return {
           ...result,
-          method: 'direct_api_camera'
+          method: 'direct_api_camera',
+          mood: mood,
+          moodIntensity: moodIntensity
         };
       } else {
-        throw new Error(`Video generation with camera control failed: ${response.message}`);
+        throw new Error(`${mood} mood video generation with camera control failed: ${response.message}`);
       }
 
     } catch (error) {
-      console.error('❌ Direct API camera control video generation error:', error.message);
-      throw new Error(`Failed to generate video with camera control via direct API: ${error.message}`);
+      console.error(`❌ Direct API ${mood} mood camera control video generation error:`, error.message);
+      throw new Error(`Failed to generate ${mood} mood video with camera control via direct API: ${error.message}`);
     }
   }
 
@@ -464,45 +671,66 @@ class KlingAIService {
     }
   }
 
-  // Enhanced video generation with fallbacks (Updated)
-  async generateVideoWithFallback(imageUrl, motionDescription, duration, sceneType = 'standard') {
+  // UPDATED: Enhanced video generation with mood-aware fallbacks
+  async generateVideoWithFallback(imageUrl, motionDescription, duration, sceneType = 'standard', mood = 'professional', moodIntensity = 5) {
     const maxRetries = 3;
     let lastError;
 
+    // Get mood-specific settings
+    const moodSettings = this.getMoodSettings(mood, moodIntensity);
+
     const sceneSettings = {
-      'action': { mode: 'pro', camera_control: { config: { "pan": 3 } } },
-      'dialogue': { mode: 'pro', camera_control: { config: { "tilt": 0 } } },
-      'landscape': { mode: 'std', camera_control: { config: { "zoom": -2 } } },
-      'emotional': { mode: 'pro', camera_control: { config: { "zoom": 4 } } },
-      'standard': { mode: 'std', camera_control: { config: { "tilt": 0 } } }
+      'action': { 
+        mode: moodSettings.preferredMode, 
+        camera_control: { config: { "pan": Math.min(5, 2 + moodIntensity/2) } } 
+      },
+      'dialogue': { 
+        mode: moodSettings.preferredMode, 
+        camera_control: { config: { "tilt": 0 } } 
+      },
+      'landscape': { 
+        mode: 'std', 
+        camera_control: { config: { "zoom": Math.max(-3, -1 - moodIntensity/3) } } 
+      },
+      'emotional': { 
+        mode: moodSettings.preferredMode, 
+        camera_control: { config: { "zoom": Math.min(6, 2 + moodIntensity/2) } } 
+      },
+      'standard': { 
+        mode: moodSettings.preferredMode, 
+        camera_control: { config: { "tilt": 0 } } 
+      }
     };
 
     const settings = sceneSettings[sceneType] || sceneSettings['standard'];
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`🎬 Video generation attempt ${attempt}/${maxRetries} (${sceneType} scene)`);
+        console.log(`🎬 ${mood} mood video generation attempt ${attempt}/${maxRetries} (${sceneType} scene, intensity: ${moodIntensity}/10)`);
         
         if (attempt === 1) {
-          // First try with camera controls (will use Replicate -> Direct API fallback)
+          // First try with camera controls and mood enhancement
           return await this.generateVideoWithCameraControl(
             imageUrl, 
             motionDescription, 
             duration, 
-            settings.camera_control
+            settings.camera_control,
+            mood,
+            moodIntensity
           );
         } else if (attempt === 2) {
-          // Second try with standard generation (will use Replicate -> Direct API fallback)
-          return await this.generateVideo(imageUrl, motionDescription, duration, '16:9', 'std');
+          // Second try with standard generation and mood enhancement
+          return await this.generateVideo(imageUrl, motionDescription, duration, '16:9', 'std', mood, moodIntensity);
         } else {
-          // Final fallback: simplified prompt with standard generation
-          const simplePrompt = `Disney animation: ${motionDescription.split(',')[0]}`;
-          return await this.generateVideo(imageUrl, simplePrompt, duration, '16:9', 'std');
+          // Final fallback: simplified prompt with mood but reduced intensity
+          const simplifiedMoodIntensity = Math.max(1, moodIntensity - 2);
+          const simplePrompt = `Disney animation: ${motionDescription.split(',')[0]} with ${mood} mood`;
+          return await this.generateVideo(imageUrl, simplePrompt, duration, '16:9', 'std', mood, simplifiedMoodIntensity);
         }
         
       } catch (error) {
         lastError = error;
-        console.error(`❌ Attempt ${attempt} failed:`, error.message);
+        console.error(`❌ ${mood} mood attempt ${attempt} failed:`, error.message);
         
         if (attempt < maxRetries) {
           const delay = Math.pow(2, attempt) * 2000;
@@ -512,7 +740,7 @@ class KlingAIService {
       }
     }
 
-    throw new Error(`Video generation failed after ${maxRetries} attempts: ${lastError.message}`);
+    throw new Error(`${mood} mood video generation failed after ${maxRetries} attempts: ${lastError.message}`);
   }
 
   // Convert local image for API usage
