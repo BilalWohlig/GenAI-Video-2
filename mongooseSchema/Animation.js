@@ -1,4 +1,4 @@
-// mongooseSchema/Animation.js
+// mongooseSchema/Animation.js - Updated with storage information
 const mongoose = require('mongoose')
 const Schema = mongoose.Schema
 const timestamps = require('mongoose-timestamp-plugin')
@@ -56,6 +56,48 @@ const sceneSchema = new Schema({
   }
 }, { _id: false })
 
+// Add storage schema for tracking where videos are stored
+const storageSchema = new Schema({
+  type: {
+    type: String,
+    enum: ['local', 'gcs', 's3', 'azure'],
+    required: true,
+    default: 'local'
+  },
+  bucketName: {
+    type: String,
+    required: false // Only required for cloud storage
+  },
+  fileName: {
+    type: String,
+    required: false // Only required for cloud storage
+  },
+  publicUrl: {
+    type: String,
+    required: true
+  },
+  isPublic: {
+    type: Boolean,
+    default: false
+  },
+  uploadedAt: {
+    type: Date,
+    default: Date.now
+  },
+  uploadError: {
+    type: String,
+    required: false // Only set if upload failed
+  },
+  fileSize: {
+    type: Number,
+    required: false // File size in bytes
+  },
+  contentType: {
+    type: String,
+    default: 'video/mp4'
+  }
+}, { _id: false })
+
 const animationSchema = new Schema({
   title: {
     type: String,
@@ -97,6 +139,27 @@ const animationSchema = new Schema({
   isActive: {
     type: Boolean,
     default: true
+  },
+  // Add storage information
+  storage: {
+    type: storageSchema,
+    required: false // Optional for backward compatibility
+  },
+  // Add mood and country context information
+  overallMood: {
+    type: String,
+    required: false
+  },
+  moodProgression: [{
+    type: String
+  }],
+  countryContext: {
+    primaryCountry: String,
+    primaryCity: String,
+    culturalContext: String,
+    architecturalStyle: String,
+    demographicNotes: String,
+    languageContext: String
   }
 })
 
@@ -113,5 +176,42 @@ animationSchema.plugin(timestamps, timestampsAppendObj)
 animationSchema.index({ status: 1 })
 animationSchema.index({ generatedAt: -1 })
 animationSchema.index({ title: 'text', theme: 'text' })
+animationSchema.index({ 'storage.type': 1 })
+animationSchema.index({ 'storage.isPublic': 1 })
+animationSchema.index({ overallMood: 1 })
+
+// Add virtual for public access URL
+animationSchema.virtual('publicVideoUrl').get(function() {
+  if (this.storage && this.storage.isPublic) {
+    return this.storage.publicUrl;
+  }
+  return this.videoUrl;
+});
+
+// Add method to check if video is stored in cloud
+animationSchema.methods.isCloudStored = function() {
+  return this.storage && ['gcs', 's3', 'azure'].includes(this.storage.type);
+};
+
+// Add method to get storage details
+animationSchema.methods.getStorageInfo = function() {
+  if (!this.storage) {
+    return {
+      type: 'local',
+      isPublic: false,
+      url: this.videoUrl
+    };
+  }
+  
+  return {
+    type: this.storage.type,
+    isPublic: this.storage.isPublic,
+    url: this.storage.publicUrl,
+    bucketName: this.storage.bucketName,
+    fileName: this.storage.fileName,
+    uploadedAt: this.storage.uploadedAt,
+    fileSize: this.storage.fileSize
+  };
+};
 
 module.exports = mongoose.model('Animation', animationSchema)

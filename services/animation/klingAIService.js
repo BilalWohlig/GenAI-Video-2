@@ -1,31 +1,30 @@
-// services/animation/klingAIService.js - Enhanced with mood support
+// services/animation/klingAIService.js - Enhanced with Fal.ai integration replacing Replicate
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
 const FormData = require('form-data');
 const path = require('path');
-const Replicate = require('replicate');
+const { fal } = require('@fal-ai/client');
 
 class KlingAIService {
   constructor() {
     this.accessKey = process.env.KLING_ACCESS_KEY;
     this.secretKey = process.env.KLING_SECRET_KEY;
-    this.replicateApiToken = process.env.REPLICATE_API_TOKEN;
+    this.falApiKey = process.env.FAL_API_KEY;
     this.baseURL = 'https://api-singapore.klingai.com/v1';
     
-    // Initialize Replicate client
-    if (this.replicateApiToken) {
-      this.replicate = new Replicate({
-        auth: this.replicateApiToken,
+    // Initialize Fal.ai client
+    if (this.falApiKey) {
+      fal.config({
+        credentials: this.falApiKey,
       });
+      console.log('✅ Fal.ai client initialized');
+    } else {
+      console.warn('⚠️ Fal.ai API key not found. Please set FAL_API_KEY environment variable.');
     }
     
     if (!this.accessKey || !this.secretKey) {
       console.warn('⚠️ Kling AI credentials not found. Please set KLING_ACCESS_KEY and KLING_SECRET_KEY environment variables.');
-    }
-
-    if (!this.replicateApiToken) {
-      console.warn('⚠️ Replicate API token not found. Please set REPLICATE_API_TOKEN environment variable.');
     }
 
     this.defaultSettings = {
@@ -90,6 +89,7 @@ class KlingAIService {
         motionIntensity: 'competent'
       }
     };
+
     // this.moodSettings = {
     //   'serious': {
     //     cfg_scale: 0.6,
@@ -165,14 +165,14 @@ class KlingAIService {
     return true;
   }
 
-  // Generate video using Replicate with mood support (Primary method)
-  async generateVideoViaReplicate(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std', mood = 'professional', moodIntensity = 5) {
+  // Generate video using Fal.ai with mood support (Primary method - replacing Replicate)
+  async generateVideoViaFalAI(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std', mood = 'professional', moodIntensity = 5) {
     try {
-      if (!this.replicateApiToken) {
-        throw new Error('Replicate API token not available');
+      if (!this.falApiKey) {
+        throw new Error('Fal.ai API key not available');
       }
 
-      console.log(`🚀 Attempting ${mood} mood video generation via Replicate (intensity: ${moodIntensity}/10)...`);
+      console.log(`🚀 Attempting ${mood} mood video generation via Fal.ai (intensity: ${moodIntensity}/10)...`);
       console.log(`   Image: ${imageUrl.substring(0, 50)}...`);
       console.log(`   Prompt: ${prompt}`);
       console.log(`   Duration: 10s, Mode: ${mode}, Mood: ${mood}`);
@@ -180,42 +180,154 @@ class KlingAIService {
       // Get mood-specific settings
       const moodSettings = this.getMoodSettings(mood, moodIntensity);
 
-      // Choose model based on mode and mood preferences
-      const model = moodSettings.preferredMode === 'pro' 
-        ? 'kwaivgi/kling-v1.6-pro:03b02153924ef65cd57b7e561f3a4ed66db11c34218d2c70a8af198987edfa3d'
-        : 'kwaivgi/kling-v1.6-standard';
+      // Choose the appropriate Fal.ai model endpoint based on mode
+      const modelEndpoint = mode === 'pro' 
+        ? 'fal-ai/kling-video/v2.1/pro/image-to-video'
+        : 'fal-ai/kling-video/v2.1/standard/image-to-video';
 
       // Enhance prompt with mood-specific motion characteristics
       const moodEnhancedPrompt = this.enhancePromptWithMoodCharacteristics(prompt, mood, moodSettings);
 
+      // Prepare the request input
       const input = {
         prompt: moodEnhancedPrompt,
-        duration: 10,
-        cfg_scale: moodSettings.cfg_scale,
-        start_image: imageUrl,
+        image_url: imageUrl,
+        duration: "10", // Fal.ai uses string format
         aspect_ratio: aspectRatio,
+        cfg_scale: moodSettings.cfg_scale,
         negative_prompt: this.getMoodSpecificNegativePrompt(mood)
       };
 
-      console.log(`🎬 Using Replicate model: ${model.split(':')[0]} with ${mood} mood optimization`);
+      console.log(`🎬 Using Fal.ai model: ${modelEndpoint} with ${mood} mood optimization`);
       
-      const output = await this.replicate.run(model, { input });
-      const replicateVideoUrl = output.url().href
+      // Submit the request and wait for completion
+      const result = await fal.subscribe(modelEndpoint, {
+        input: input,
+        logs: true,
+        onQueueUpdate: (update) => {
+          if (update.status === "IN_PROGRESS") {
+            console.log(`   Fal.ai progress: ${update.status}`);
+            if (update.logs) {
+              update.logs.map((log) => log.message).forEach(message => {
+                if (message) console.log(`   ${message}`);
+              });
+            }
+          } else {
+            console.log(`   Fal.ai status: ${update.status}`);
+          }
+        },
+      });
+
+      if (!result.data || !result.data.video || !result.data.video.url) {
+        throw new Error('Invalid response from Fal.ai - no video URL received');
+      }
+
+      const falVideoUrl = result.data.video.url;
       
-      console.log(`✅ ${mood} mood Replicate video generation successful!`);
-      console.log(`   Video URL: ${replicateVideoUrl}`);
+      console.log(`✅ ${mood} mood Fal.ai video generation successful!`);
+      console.log(`   Video URL: ${falVideoUrl}`);
 
       return {
         success: true,
-        videoUrl: replicateVideoUrl,
+        videoUrl: falVideoUrl,
         duration: 10,
-        method: 'replicate',
+        method: 'fal-ai',
         mood: mood,
-        moodIntensity: moodIntensity
+        moodIntensity: moodIntensity,
+        requestId: result.requestId
       };
 
     } catch (error) {
-      console.error(`❌ ${mood} mood Replicate video generation failed:`, error.message);
+      console.error(`❌ ${mood} mood Fal.ai video generation failed:`, error.message);
+      throw error;
+    }
+  }
+
+  // Enhanced method for queue-based processing (optional for async workflows)
+  async generateVideoViaFalAIQueue(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std', mood = 'professional', moodIntensity = 5, webhookUrl = null) {
+    try {
+      if (!this.falApiKey) {
+        throw new Error('Fal.ai API key not available');
+      }
+
+      console.log(`🔄 Submitting ${mood} mood video generation to Fal.ai queue...`);
+
+      // Get mood-specific settings
+      const moodSettings = this.getMoodSettings(mood, moodIntensity);
+
+      const modelEndpoint = mode === 'pro' 
+        ? 'fal-ai/kling-video/v2.1/pro/image-to-video'
+        : 'fal-ai/kling-video/v2.1/standard/image-to-video';
+
+      const moodEnhancedPrompt = this.enhancePromptWithMoodCharacteristics(prompt, mood, moodSettings);
+
+      const input = {
+        prompt: moodEnhancedPrompt,
+        image_url: imageUrl,
+        duration: "10",
+        aspect_ratio: aspectRatio,
+        cfg_scale: moodSettings.cfg_scale,
+        negative_prompt: this.getMoodSpecificNegativePrompt(mood)
+      };
+
+      // Submit to queue
+      const submission = await fal.queue.submit(modelEndpoint, {
+        input: input,
+        webhookUrl: webhookUrl
+      });
+
+      console.log(`✅ ${mood} mood job submitted to Fal.ai queue with ID: ${submission.request_id}`);
+
+      return {
+        success: true,
+        requestId: submission.request_id,
+        mood: mood,
+        moodIntensity: moodIntensity,
+        method: 'fal-ai-queue'
+      };
+
+    } catch (error) {
+      console.error(`❌ ${mood} mood Fal.ai queue submission failed:`, error.message);
+      throw error;
+    }
+  }
+
+  // Poll Fal.ai queue status
+  async pollFalAIQueueStatus(requestId, modelEndpoint = 'fal-ai/kling-video/v2.1/standard/image-to-video') {
+    try {
+      const status = await fal.queue.status(modelEndpoint, {
+        requestId: requestId,
+        logs: true,
+      });
+
+      return status;
+    } catch (error) {
+      console.error('❌ Error polling Fal.ai queue status:', error.message);
+      throw error;
+    }
+  }
+
+  // Get result from Fal.ai queue
+  async getFalAIQueueResult(requestId, modelEndpoint = 'fal-ai/kling-video/v2.1/standard/image-to-video') {
+    try {
+      const result = await fal.queue.result(modelEndpoint, {
+        requestId: requestId
+      });
+
+      if (!result.data || !result.data.video || !result.data.video.url) {
+        throw new Error('Invalid response from Fal.ai - no video URL received');
+      }
+
+      return {
+        success: true,
+        videoUrl: result.data.video.url,
+        duration: 10,
+        method: 'fal-ai-queue',
+        requestId: result.requestId
+      };
+
+    } catch (error) {
+      console.error('❌ Error getting Fal.ai queue result:', error.message);
       throw error;
     }
   }
@@ -284,13 +396,13 @@ class KlingAIService {
       'professional': 'unprofessional behavior, casual atmosphere, sloppy presentation, informal conduct'
     };
 
-    const baseNegative = 'low quality, blurry, distorted, violent content, inappropriate material, text overlays';
+    const baseNegative = 'blur, distort, low quality, bad anatomy, watermark, text, signature';
     const moodSpecific = baseMoodNegatives[mood] || baseMoodNegatives['professional'];
     
     return `${baseNegative}, ${moodSpecific}`;
   }
 
-  // Generate JWT token for authentication
+  // Generate JWT token for authentication (Direct Kling AI API)
   generateJWTToken() {
     this.validateCredentials();
     
@@ -427,16 +539,16 @@ class KlingAIService {
     }
   }
 
-  // UPDATED: Generate video from image with mood support
+  // UPDATED: Generate video from image with mood support (now uses Fal.ai as primary)
   async generateVideo(imageUrl, prompt, duration = 5, aspectRatio = '16:9', mode = 'std', mood = 'professional', moodIntensity = 5) {
     try {
-      // First attempt: Try Replicate with mood support
+      // First attempt: Try Fal.ai with mood support
       try {
-        console.log(`🎯 Primary attempt: Using Replicate API with ${mood} mood...`);
-        return await this.generateVideoViaReplicate(imageUrl, prompt, duration, aspectRatio, mode, mood, moodIntensity);
-      } catch (replicateError) {
-        console.warn(`⚠️ Replicate failed for ${mood} mood, falling back to direct Kling AI API`);
-        console.warn(`   Replicate error: ${replicateError.message}`);
+        console.log(`🎯 Primary attempt: Using Fal.ai API with ${mood} mood...`);
+        return await this.generateVideoViaFalAI(imageUrl, prompt, duration, aspectRatio, mode, mood, moodIntensity);
+      } catch (falError) {
+        console.warn(`⚠️ Fal.ai failed for ${mood} mood, falling back to direct Kling AI API`);
+        console.warn(`   Fal.ai error: ${falError.message}`);
       }
 
       // Fallback: Use direct Kling AI API with mood support
@@ -489,94 +601,6 @@ class KlingAIService {
     } catch (error) {
       console.error(`❌ Direct API ${mood} mood video generation error:`, error.message);
       throw new Error(`Failed to generate ${mood} mood video via direct API: ${error.message}`);
-    }
-  }
-
-  // UPDATED: Generate video with camera controls and mood support
-  async generateVideoWithCameraControl(imageUrl, prompt, duration = 5, cameraControl = {}, mood = 'professional', moodIntensity = 5) {
-    try {
-      // First attempt: Try Replicate with mood-enhanced prompt
-      try {
-        console.log(`🎯 Primary attempt: Using Replicate API with ${mood} mood and enhanced camera control...`);
-        
-        // Get mood settings
-        const moodSettings = this.getMoodSettings(mood, moodIntensity);
-        
-        // Enhance prompt with both camera control and mood characteristics
-        let enhancedPrompt = prompt;
-        if (cameraControl.config && !cameraControl.config.tilt) {
-          const cameraDescriptions = {
-            'pan': `smooth panning camera movement with ${mood} mood characteristics`,
-            'zoom': cameraControl.config.zoom > 0 ? 
-              `slow zoom in camera movement emphasizing ${mood} mood` : 
-              `slow zoom out camera movement maintaining ${mood} mood`,
-            'horizontal': `horizontal camera movement with ${mood} pacing`,
-            'vertical': `vertical camera movement reflecting ${mood} energy`
-          };
-          
-          if (cameraDescriptions[cameraControl.type]) {
-            enhancedPrompt += `, ${cameraDescriptions[cameraControl.type]}`;
-          }
-        }
-        
-        return await this.generateVideoViaReplicate(imageUrl, enhancedPrompt, duration, '16:9', 'std', mood, moodIntensity);
-      } catch (replicateError) {
-        console.warn(`⚠️ Replicate failed for ${mood} mood camera control, falling back to direct Kling AI API`);
-        console.warn(`   Replicate error: ${replicateError.message}`);
-      }
-
-      // Fallback: Use direct Kling AI API with camera controls and mood
-      console.log(`🔄 Fallback: Using direct Kling AI API with ${mood} mood camera controls...`);
-      return await this.generateVideoWithCameraControlDirect(imageUrl, prompt, duration, cameraControl, mood, moodIntensity);
-
-    } catch (error) {
-      console.error(`❌ All ${mood} mood camera control video generation methods failed:`, error.message);
-      throw new Error(`Failed to generate ${mood} mood video with camera control: ${error.message}`);
-    }
-  }
-
-  // UPDATED: Generate video with camera controls via direct API with mood
-  async generateVideoWithCameraControlDirect(imageUrl, prompt, duration = 5, cameraControl = {}, mood = 'professional', moodIntensity = 5) {
-    try {
-      console.log(`🎥 Generating ${mood} mood video with camera controls via direct API (intensity: ${moodIntensity}/10)...`);
-      
-      // Get mood-specific settings
-      const moodSettings = this.getMoodSettings(mood, moodIntensity);
-      
-      // Enhance prompt with mood characteristics
-      const moodEnhancedPrompt = this.enhancePromptWithMoodCharacteristics(prompt, mood, moodSettings);
-
-      const requestBody = {
-        model_name: 'kling-v1-6',
-        image: imageUrl,
-        prompt: moodEnhancedPrompt,
-        duration: "10",
-        mode: 'pro', // Camera controls typically require pro mode
-        cfg_scale: moodSettings.cfg_scale
-      };
-
-      // Add camera control if provided and compatible with mood
-      if (cameraControl.config && !cameraControl.config.tilt) {
-        requestBody.camera_control = cameraControl;
-      }
-
-      const response = await this.makeAuthenticatedRequest('POST', '/videos/image2video', requestBody);
-
-      if (response.code === 0) {
-        const result = await this.pollVideoGeneration(response.data.task_id);
-        return {
-          ...result,
-          method: 'direct_api_camera',
-          mood: mood,
-          moodIntensity: moodIntensity
-        };
-      } else {
-        throw new Error(`${mood} mood video generation with camera control failed: ${response.message}`);
-      }
-
-    } catch (error) {
-      console.error(`❌ Direct API ${mood} mood camera control video generation error:`, error.message);
-      throw new Error(`Failed to generate ${mood} mood video with camera control via direct API: ${error.message}`);
     }
   }
 
@@ -639,7 +663,7 @@ class KlingAIService {
     throw new Error(`Video generation timed out after ${this.defaultSettings.maxPollAttempts} attempts`);
   }
 
-  // Download video from Kling AI
+  // Download video
   async downloadVideo(videoUrl, outputPath) {
     try {
       console.log('⬇️ Downloading video...');
@@ -671,7 +695,7 @@ class KlingAIService {
     }
   }
 
-  // UPDATED: Enhanced video generation with mood-aware fallbacks
+  // UPDATED: Enhanced video generation with mood-aware fallbacks (now uses Fal.ai as primary)
   async generateVideoWithFallback(imageUrl, motionDescription, duration, sceneType = 'standard', mood = 'professional', moodIntensity = 5) {
     const maxRetries = 3;
     let lastError;
@@ -679,47 +703,23 @@ class KlingAIService {
     // Get mood-specific settings
     const moodSettings = this.getMoodSettings(mood, moodIntensity);
 
-    const sceneSettings = {
-      'action': { 
-        mode: moodSettings.preferredMode, 
-        camera_control: { config: { "pan": Math.min(5, 2 + moodIntensity/2) } } 
-      },
-      'dialogue': { 
-        mode: moodSettings.preferredMode, 
-        camera_control: { config: { "tilt": 0 } } 
-      },
-      'landscape': { 
-        mode: 'std', 
-        camera_control: { config: { "zoom": Math.max(-3, -1 - moodIntensity/3) } } 
-      },
-      'emotional': { 
-        mode: moodSettings.preferredMode, 
-        camera_control: { config: { "zoom": Math.min(6, 2 + moodIntensity/2) } } 
-      },
-      'standard': { 
-        mode: moodSettings.preferredMode, 
-        camera_control: { config: { "tilt": 0 } } 
-      }
-    };
-
-    const settings = sceneSettings[sceneType] || sceneSettings['standard'];
-
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`🎬 ${mood} mood video generation attempt ${attempt}/${maxRetries} (${sceneType} scene, intensity: ${moodIntensity}/10)`);
         
         if (attempt === 1) {
-          // First try with camera controls and mood enhancement
-          return await this.generateVideoWithCameraControl(
+          // First try with Fal.ai and mood enhancement
+          return await this.generateVideoViaFalAI(
             imageUrl, 
             motionDescription, 
             duration, 
-            settings.camera_control,
+            '16:9',
+            'std',
             mood,
             moodIntensity
           );
         } else if (attempt === 2) {
-          // Second try with standard generation and mood enhancement
+          // Second try with direct Kling AI API
           return await this.generateVideo(imageUrl, motionDescription, duration, '16:9', 'std', mood, moodIntensity);
         } else {
           // Final fallback: simplified prompt with mood but reduced intensity
@@ -746,15 +746,37 @@ class KlingAIService {
   // Convert local image for API usage
   async convertLocalImageForKlingAI(localImagePath) {
     try {
-      // For Replicate, we need to upload to a public URL first
-      if (this.imagekitApiKey && this.imagekitPrivateKey && this.imagekitEndpoint) {
-        const tempFileName = `temp_${Date.now()}.png`;
-        const tempUrl = await this.uploadToImageKit(localImagePath, tempFileName);
-        console.log(`📤 Image uploaded to ImageKit for Replicate: ${tempUrl.substring(0, 50)}...`);
-        return tempUrl;
+      // For Fal.ai, we can upload the file directly using their storage service
+      if (this.falApiKey) {
+        try {
+          console.log('📤 Uploading image to Fal.ai storage...');
+          
+          // Read the file
+          const fileBuffer = await fs.readFile(localImagePath);
+          const fileName = path.basename(localImagePath);
+          
+          // Create a File object (simulating browser File API in Node.js)
+          const file = {
+            buffer: fileBuffer,
+            name: fileName,
+            type: 'image/png'
+          };
+          
+          // Upload to Fal.ai storage
+          const url = await fal.storage.upload(fileBuffer, {
+            fileName: fileName,
+            contentType: 'image/png'
+          });
+          
+          console.log(`✅ Image uploaded to Fal.ai storage: ${url.substring(0, 50)}...`);
+          return url;
+          
+        } catch (uploadError) {
+          console.warn('⚠️ Fal.ai upload failed, falling back to base64:', uploadError.message);
+        }
       }
       
-      // Fallback: Convert to data URL (may not work with Replicate)
+      // Fallback: Convert to base64 data URI
       const imageBuffer = await fs.readFile(localImagePath);
       const base64Data = imageBuffer.toString('base64');
       return `data:image/png;base64,${base64Data}`;

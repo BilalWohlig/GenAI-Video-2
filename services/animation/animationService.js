@@ -1,4 +1,4 @@
-// services/animation/animationService.js - Enhanced with comprehensive mood integration
+// services/animation/animationService.js - Enhanced with comprehensive mood integration and token counting
 const OpenAI = require('openai');
 const { toFile } = require('openai');
 const axios = require('axios');
@@ -11,6 +11,8 @@ const { z } = require('zod');
 const { zodTextFormat } = require('openai/helpers/zod');
 const Animation = require('../../mongooseSchema/Animation');
 const KlingAI = require('./klingAIService');
+const { encoding_for_model } = require('tiktoken');
+const { Storage } = require('@google-cloud/storage');
 
 // Add required imports for audio-video sync
 const { execSync, spawnSync } = require("node:child_process");
@@ -79,6 +81,23 @@ class AnimationService {
     
     this.workingDir = path.join(__dirname, '../../temp');
     this.ensureDirectoryExists();
+    this.initializeGoogleCloudStorage();
+
+    // Initialize tiktoken encoder for GPT-4
+    try {
+      this.tokenEncoder = encoding_for_model('gpt-4o');
+      console.log('✅ Tiktoken encoder initialized for GPT-4');
+    } catch (error) {
+      console.warn('⚠️ Failed to initialize tiktoken encoder:', error.message);
+      this.tokenEncoder = null;
+    }
+
+    // Token tracking
+    this.tokenUsage = {
+      total: 0,
+      byFunction: {},
+      byAPICall: []
+    };
 
     // Define comprehensive mood configurations for every aspect of generation
     this.moodConfigurations = {
@@ -293,6 +312,252 @@ class AnimationService {
     };
   }
 
+  initializeGoogleCloudStorage() {
+    try {
+      // Initialize Google Cloud Storage
+      this.gcsStorage = new Storage({
+        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+        keyFilename: process.env.GOOGLE_CLOUD_KEY_FILE, // Path to service account key file
+        // Alternatively, if using environment variables for credentials:
+        // credentials: {
+        //   client_email: process.env.GOOGLE_CLOUD_CLIENT_EMAIL,
+        //   private_key: process.env.GOOGLE_CLOUD_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        // }
+      });
+
+      this.gcsBucketName = process.env.GOOGLE_CLOUD_STORAGE_BUCKET;
+      
+      if (!this.gcsBucketName) {
+        console.warn('⚠️ Google Cloud Storage bucket name not configured. Videos will be stored locally only.');
+        this.gcsEnabled = false;
+      } else {
+        this.gcsBucket = this.gcsStorage.bucket(this.gcsBucketName);
+        this.gcsEnabled = true;
+        console.log(`✅ Google Cloud Storage initialized with bucket: ${this.gcsBucketName}`);
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to initialize Google Cloud Storage:', error.message);
+      console.warn('Videos will be stored locally only.');
+      this.gcsEnabled = false;
+    }
+  }
+
+  // Add this new method to upload files to Google Cloud Storage
+  async uploadToGoogleCloudStorage(localFilePath, destinationFileName, contentType = 'video/mp4') {
+    if (!this.gcsEnabled) {
+      throw new Error('Google Cloud Storage is not configured');
+    }
+
+    try {
+      console.log(`📤 Uploading ${destinationFileName} to Google Cloud Storage...`);
+      
+      const file = this.gcsBucket.file(destinationFileName);
+      
+      // Upload options
+      const uploadOptions = {
+        metadata: {
+          contentType: contentType,
+          cacheControl: 'public, max-age=31536000', // 1 year cache
+        },
+        public: true, // Make the file publicly accessible
+        resumable: false, // Use simple upload for smaller files
+      };
+
+      // Upload the file
+      await this.gcsBucket.upload(localFilePath, {
+        destination: destinationFileName,
+        ...uploadOptions
+      });
+
+      // Make the file public (if not already set in uploadOptions)
+      await file.makePublic();
+
+      // Get the public URL
+      const publicUrl = `https://storage.googleapis.com/${this.gcsBucketName}/${destinationFileName}`;
+      
+      console.log(`✅ File uploaded successfully to: ${publicUrl}`);
+      
+      return {
+        success: true,
+        publicUrl: publicUrl,
+        bucketName: this.gcsBucketName,
+        fileName: destinationFileName
+      };
+
+    } catch (error) {
+      console.error('❌ Error uploading to Google Cloud Storage:', error);
+      throw new Error(`Failed to upload to Google Cloud Storage: ${error.message}`);
+    }
+  }
+
+  // Add this new method to generate a unique filename for GCS
+  generateGCSFileName(originalFileName, animationId) {
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 8);
+    const extension = path.extname(originalFileName);
+    const baseName = path.basename(originalFileName, extension);
+    
+    return `animations/${animationId}/${timestamp}_${randomSuffix}_${baseName}${extension}`;
+  }
+
+  // Add this new method to upload animation video and get public URL
+  async uploadAnimationVideo(localVideoPath, animationId, title) {
+    try {
+      if (!this.gcsEnabled) {
+        console.warn('⚠️ Google Cloud Storage not configured, returning local path');
+        return {
+          success: false,
+          publicUrl: localVideoPath,
+          isLocal: true
+        };
+      }
+
+      // Generate a unique filename for GCS
+      const gcsFileName = this.generateGCSFileName(`${title.replace(/[^a-zA-Z0-9]/g, '_')}_animation.mp4`, animationId);
+      
+      // Upload to GCS
+      const uploadResult = await this.uploadToGoogleCloudStorage(
+        localVideoPath,
+        gcsFileName,
+        'video/mp4'
+      );
+
+      return {
+        ...uploadResult,
+        isLocal: false
+      };
+
+    } catch (error) {
+      console.error('❌ Error uploading animation video:', error);
+      // Fallback to local storage
+      console.warn('⚠️ Falling back to local storage due to upload failure');
+      return {
+        success: false,
+        publicUrl: localVideoPath,
+        isLocal: true,
+        error: error.message
+      };
+    }
+  }
+
+
+  // Token counting helper methods
+  countTokens(text, functionName = 'unknown') {
+    if (!this.tokenEncoder || !text) {
+      return 0;
+    }
+
+    try {
+      const tokens = this.tokenEncoder.encode(text);
+      const tokenCount = tokens.length;
+      
+      // Track token usage
+      this.tokenUsage.total += tokenCount;
+      if (!this.tokenUsage.byFunction[functionName]) {
+        this.tokenUsage.byFunction[functionName] = 0;
+      }
+      this.tokenUsage.byFunction[functionName] += tokenCount;
+
+      return tokenCount;
+    } catch (error) {
+      console.warn(`⚠️ Token counting failed for ${functionName}:`, error.message);
+      return 0;
+    }
+  }
+
+  countMessageTokens(messages, functionName = 'unknown') {
+    if (!Array.isArray(messages)) {
+      return 0;
+    }
+
+    let totalTokens = 0;
+    for (const message of messages) {
+      if (message.content) {
+        totalTokens += this.countTokens(message.content, functionName);
+      }
+    }
+
+    return totalTokens;
+  }
+
+  logTokenUsage(functionName, systemPrompt, userPrompt, additionalInfo = {}) {
+    const systemTokens = this.countTokens(systemPrompt, functionName);
+    const userTokens = this.countTokens(userPrompt, functionName);
+    const totalTokens = systemTokens + userTokens;
+
+    const tokenInfo = {
+      function: functionName,
+      timestamp: new Date().toISOString(),
+      systemTokens,
+      userTokens,
+      totalTokens,
+      ...additionalInfo
+    };
+
+    this.tokenUsage.byAPICall.push(tokenInfo);
+
+    console.log(`🔢 Token Usage - ${functionName}:`);
+    console.log(`   System Prompt: ${systemTokens} tokens`);
+    console.log(`   User Prompt: ${userTokens} tokens`);
+    console.log(`   Total: ${totalTokens} tokens`);
+    if (additionalInfo.model) {
+      console.log(`   Model: ${additionalInfo.model}`);
+    }
+
+    return tokenInfo;
+  }
+
+  logImageTokenUsage(functionName, prompt, additionalInfo = {}) {
+    const promptTokens = this.countTokens(prompt, functionName);
+
+    const tokenInfo = {
+      function: functionName,
+      timestamp: new Date().toISOString(),
+      promptTokens,
+      totalTokens: promptTokens,
+      type: 'image_generation',
+      ...additionalInfo
+    };
+
+    this.tokenUsage.byAPICall.push(tokenInfo);
+
+    console.log(`🔢 Token Usage - ${functionName} (Image):`);
+    console.log(`   Prompt: ${promptTokens} tokens`);
+    if (additionalInfo.model) {
+      console.log(`   Model: ${additionalInfo.model}`);
+    }
+
+    return tokenInfo;
+  }
+
+  getTokenUsageSummary() {
+    const summary = {
+      totalTokens: this.tokenUsage.total,
+      byFunction: { ...this.tokenUsage.byFunction },
+      totalAPIcalls: this.tokenUsage.byAPICall.length,
+      estimatedCost: this.estimateTokenCost(this.tokenUsage.total)
+    };
+
+    console.log('\n📊 COMPREHENSIVE TOKEN USAGE SUMMARY:');
+    console.log(`   Total Tokens Used: ${summary.totalTokens.toLocaleString()}`);
+    console.log(`   Total API Calls: ${summary.totalAPIcalls}`);
+    console.log(`   Estimated Cost: $${summary.estimatedCost.toFixed(4)}`);
+    console.log('\n   Breakdown by Function:');
+    
+    Object.entries(summary.byFunction).forEach(([func, tokens]) => {
+      console.log(`     ${func}: ${tokens.toLocaleString()} tokens`);
+    });
+
+    return summary;
+  }
+
+  estimateTokenCost(tokenCount) {
+    // GPT-4o pricing (as of 2024): $5.00 per 1M input tokens, $15.00 per 1M output tokens
+    // For simplicity, using input token rate as most tokens are input
+    const costPer1MTokens = 5.00;
+    return (tokenCount / 1000000) * costPer1MTokens;
+  }
+
   async ensureDirectoryExists() {
     try {
       await fs.mkdir(this.workingDir, { recursive: true });
@@ -354,6 +619,8 @@ class AnimationService {
 
   // NEW METHOD: Detect country and cultural context from article
   async detectCountryContext(article) {
+    const functionName = 'detectCountryContext';
+    
     const systemPrompt = `You are a geographical and cultural analysis expert. Analyze news articles to identify the primary country/region where events are taking place and provide relevant cultural context for animation production.`;
     
     const userPrompt = `Analyze this news article and identify the primary country where the events are taking place. Also provide cultural context that would be important for creating authentic location settings and background characters.
@@ -369,6 +636,12 @@ class AnimationService {
     - Language context (for signs, text in scenes)
 
     If multiple countries are mentioned, focus on where the main events are happening. If unclear, provide your best assessment based on context clues.`;
+
+    // Log token usage
+    const tokenInfo = this.logTokenUsage(functionName, systemPrompt, userPrompt, {
+      model: 'gpt-4o-2024-08-06',
+      articleLength: article.length
+    });
 
     try {
       const response = await this.openai.responses.parse({
@@ -522,6 +795,8 @@ class AnimationService {
 
   // UPDATED: Phase 1: Story Development with Enhanced Mood Integration
   async generateStoryStructure(article, sceneCount) {
+    const functionName = 'generateStoryStructure';
+    
     // First, detect the country context
     const countryContext = await this.detectCountryContext(article);
 
@@ -596,6 +871,14 @@ class AnimationService {
     - Scene types optimized for the specified mood and emotional progression
     - Each scene should be 10 seconds duration for clarity, but for narration text, it should be as if each respective clip is 6-8s long
     - Overall mood progression that creates compelling emotional storytelling while remaining factual`;
+
+    // Log token usage
+    const tokenInfo = this.logTokenUsage(functionName, systemPrompt, userPrompt, {
+      model: 'gpt-4o-2024-08-06',
+      sceneCount,
+      articleLength: article.length,
+      countryContext: countryContext.primaryCountry
+    });
 
     try {
       const response = await this.openai.responses.parse({
@@ -683,10 +966,16 @@ class AnimationService {
         - Authentic to ${countryContext.primaryCountry} cultural context
         - Expression should be adaptable for various moods (serious, hopeful, concerned, etc.)`;
 
+        // Log token usage for character generation
+        this.logImageTokenUsage('generateCharacterAssets', masterCharacterPrompt, {
+          model: 'gpt-image-1',
+          characterName: character.name,
+          countryContext: countryContext.primaryCountry
+        });
+
         const masterImagePath = await this.generateImage(masterCharacterPrompt);
         
         // Generate character expressions for different moods
-        // const moodExpressions = ['serious', 'hopeful', 'concerned', 'professional', 'focused'];
         const moodExpressions = [];
         const characterExpressions = {};
         
@@ -708,6 +997,13 @@ class AnimationService {
             CRITICAL: Keep hands EMPTY and free of any objects, artifacts, or items - exactly like the reference image.
             Maintain the same hand positioning and ensure no objects appear in the hands.`;  
           
+          // Log token usage for expression generation
+          this.logImageTokenUsage('generateCharacterExpression', expressionPrompt, {
+            model: 'gpt-image-1',
+            characterName: character.name,
+            moodExpression: moodExpression
+          });
+
           const expressionImagePath = await this.generateImageWithReference(
             [masterImagePath], 
             expressionPrompt
@@ -924,11 +1220,29 @@ class AnimationService {
         if (referenceImages.length > 0) {
           // Generate scene with character references and mood-enhanced descriptions
           console.log(`   Using ${referenceImages.length} mood-appropriate character reference images for ${scene.mood} scene`);
-        //   console.log("Full Scene Prompt ", fullScenePrompt)
+
+          // Log token usage for scene generation with references
+          this.logImageTokenUsage('generateSceneWithReference', fullScenePrompt, {
+            model: 'gpt-image-1',
+            sceneNumber: scene.sceneNumber,
+            mood: scene.mood,
+            moodIntensity: scene.moodIntensity,
+            referenceImagesCount: referenceImages.length
+          });
+
           sceneImagePath = await this.generateImageWithReference(referenceImages, fullScenePrompt);
         } else {
           // Generate scene without character references but with mood enhancement
           console.log(`   Generating ${scene.mood} mood scene without character references`);
+          
+          // Log token usage for scene generation without references
+          this.logImageTokenUsage('generateSceneWithoutReference', fullScenePrompt, {
+            model: 'gpt-image-1',
+            sceneNumber: scene.sceneNumber,
+            mood: scene.mood,
+            moodIntensity: scene.moodIntensity
+          });
+
           sceneImagePath = await this.generateImage(fullScenePrompt);
         }
         
@@ -1216,6 +1530,8 @@ class AnimationService {
         const moodConfig = scene.moodConfig || this.getMoodConfiguration(scene.mood);
 
         // Generate motion description using GPT-4 with enhanced mood integration
+        const functionName = 'generateSceneVideos';
+        
         const motionSystemPrompt = `You are a professional Disney animation director specializing in mood-based motion design. Create motion descriptions that perfectly capture specific moods while maintaining family-friendly, professional content suitable for news animation. Focus on how camera movement, character motion, and environmental elements should move to convey the exact mood specified.
 
         MOOD EXPERTISE: You understand how different moods require different motion approaches:
@@ -1258,6 +1574,15 @@ class AnimationService {
         ${this.getMoodSpecificMotionGuidelines(scene.mood, scene.moodIntensity)}
         
         Provide a mood-appropriate motion description (max 150 characters) that perfectly captures ${scene.mood} mood with ${scene.moodIntensity}/10 intensity while maintaining professional, family-friendly content.`;
+
+        // Log token usage for motion generation
+        this.logTokenUsage(functionName, motionSystemPrompt, motionUserPrompt, {
+          model: 'gpt-4o-2024-08-06',
+          sceneNumber: scene.sceneNumber,
+          mood: scene.mood,
+          moodIntensity: scene.moodIntensity,
+          sceneType: scene.sceneType
+        });
 
         const motionResponse = await this.openai.responses.parse({
           model: "gpt-4o-2024-08-06",
@@ -2124,10 +2449,10 @@ class AnimationService {
     }
   }
 
-  async saveAnimationToDatabase(animationData, finalVideoUrl) {
+  async saveAnimationToDatabase(animationData, finalVideoUrl, uploadInfo = null) {
     try {
-      // Enhanced animation data with mood information
-      const animation = new Animation({
+      // Enhanced animation data with mood information and GCS details
+      const animationDoc = {
         title: animationData.title,
         theme: animationData.theme,
         article: animationData.originalArticle,
@@ -2146,9 +2471,29 @@ class AnimationService {
         overallMood: animationData.overallMood,
         moodProgression: animationData.moodProgression || [],
         countryContext: animationData.countryContext
-      });
+      };
 
+      // Add GCS-specific fields if upload was successful
+      if (uploadInfo) {
+        animationDoc.storage = {
+          type: uploadInfo.isLocal ? 'local' : 'gcs',
+          bucketName: uploadInfo.bucketName || null,
+          fileName: uploadInfo.fileName || null,
+          publicUrl: uploadInfo.publicUrl,
+          uploadedAt: new Date(),
+          isPublic: !uploadInfo.isLocal
+        };
+
+        if (uploadInfo.error) {
+          animationDoc.storage.uploadError = uploadInfo.error;
+        }
+      }
+
+      const animation = new Animation(animationDoc);
       await animation.save();
+      
+      console.log(`💾 Animation saved to database with ${uploadInfo?.isLocal ? 'local' : 'GCS'} storage info`);
+      
       return animation;
 
     } catch (error) {
@@ -2157,13 +2502,22 @@ class AnimationService {
     }
   }
 
-  // UPDATED: Main pipeline execution with comprehensive mood integration
+
+  // UPDATED: Main pipeline execution with comprehensive mood integration and token tracking
   async generateAnimation(article, sceneCount) {
     const startTime = Date.now();
     let finalVideoPath = null;
+    let uploadInfo = null;
+    
+    // Reset token tracking for this generation
+    this.tokenUsage = {
+      total: 0,
+      byFunction: {},
+      byAPICall: []
+    };
     
     try {
-      console.log('🎬 Starting comprehensive mood-enhanced Disney animation generation pipeline...');
+      console.log('🎬 Starting comprehensive mood-enhanced Disney animation generation pipeline with token tracking...');
       console.log(`📄 Article length: ${article.length} characters`);
       console.log(`🎭 Scenes to generate: ${sceneCount}`);
 
@@ -2201,22 +2555,76 @@ class AnimationService {
       finalVideoPath = await this.assembleAnimation(sceneVideos, audioAssets, storyData);
       console.log('✅ Mood-enhanced animation assembly completed', finalVideoPath);
 
-      // Save to permanent location
-      const outputDir = path.join(process.cwd(), 'public', 'animations');
-      await fs.mkdir(outputDir, { recursive: true });
-      
-      const permanentVideoFileName = `mood_animation_${Date.now()}_${uuidv4()}.mp4`;
-      const permanentVideoPath = path.join(outputDir, permanentVideoFileName);
-      
-      // Copy final video to permanent location
-      await fs.copyFile(finalVideoPath, permanentVideoPath);
-      console.log(`📁 Final mood-enhanced video saved to: ${permanentVideoPath}`);
-
-      // Save to database with mood information
+      // Save to database first to get animation ID
       const processingTime = Date.now() - startTime;
       storyData.processingTime = processingTime;
       
-      const animationRecord = await this.saveAnimationToDatabase(storyData, permanentVideoPath);
+      // Create a temporary animation record to get the ID
+      const tempAnimation = await this.saveAnimationToDatabase(storyData, finalVideoPath);
+      const animationId = tempAnimation._id.toString();
+
+      // Phase 7: Upload to Google Cloud Storage
+      console.log('\n☁️ Phase 7: Uploading to Google Cloud Storage...');
+      uploadInfo = await this.uploadAnimationVideo(finalVideoPath, animationId, storyData.title);
+      
+      if (uploadInfo.success && !uploadInfo.isLocal) {
+        console.log(`✅ Video uploaded to GCS: ${uploadInfo.publicUrl}`);
+        
+        // Update the animation record with GCS URL
+        await Animation.findByIdAndUpdate(animationId, {
+          videoUrl: uploadInfo.publicUrl,
+          storage: {
+            type: 'gcs',
+            bucketName: uploadInfo.bucketName,
+            fileName: uploadInfo.fileName,
+            publicUrl: uploadInfo.publicUrl,
+            uploadedAt: new Date(),
+            isPublic: true
+          }
+        });
+        
+        // Also save to local public directory as backup
+        const outputDir = path.join(process.cwd(), 'public', 'animations');
+        await fs.mkdir(outputDir, { recursive: true });
+        
+        const permanentVideoFileName = `mood_animation_${animationId}_${Date.now()}.mp4`;
+        const permanentVideoPath = path.join(outputDir, permanentVideoFileName);
+        
+        await fs.copyFile(finalVideoPath, permanentVideoPath);
+        console.log(`📁 Backup copy saved locally to: ${permanentVideoPath}`);
+        
+      } else {
+        console.log(`⚠️ Using local storage: ${uploadInfo.publicUrl}`);
+        
+        // Save to permanent location locally
+        const outputDir = path.join(process.cwd(), 'public', 'animations');
+        await fs.mkdir(outputDir, { recursive: true });
+        
+        const permanentVideoFileName = `mood_animation_${animationId}_${Date.now()}.mp4`;
+        const permanentVideoPath = path.join(outputDir, permanentVideoFileName);
+        
+        await fs.copyFile(finalVideoPath, permanentVideoPath);
+        
+        // Update the animation record with local URL
+        await Animation.findByIdAndUpdate(animationId, {
+          videoUrl: permanentVideoPath,
+          storage: {
+            type: 'local',
+            publicUrl: permanentVideoPath,
+            uploadedAt: new Date(),
+            isPublic: false,
+            ...(uploadInfo.error && { uploadError: uploadInfo.error })
+          }
+        });
+        
+        console.log(`📁 Final video saved locally to: ${permanentVideoPath}`);
+      }
+
+      // Get the updated animation record
+      const finalAnimationRecord = await Animation.findById(animationId);
+
+      // Get comprehensive token usage summary
+      const tokenSummary = this.getTokenUsageSummary();
 
       console.log(`\n🎉 Comprehensive mood-enhanced animation generation completed successfully!`);
       console.log(`🌍 Generated for: ${storyData.countryContext.primaryCountry}${storyData.countryContext.primaryCity ? ` (${storyData.countryContext.primaryCity})` : ''}`);
@@ -2224,17 +2632,18 @@ class AnimationService {
       console.log(`🎬 Mood progression: ${storyData.scenes.map(s => `${s.mood}(${s.moodIntensity}/10)`).join(' → ')}`);
       console.log(`🎨 Mood-specific visual and audio treatment applied throughout`);
       console.log(`🛡️ Content safety with mood preservation maintained`);
+      console.log(`☁️ Storage: ${uploadInfo?.isLocal ? 'Local filesystem' : 'Google Cloud Storage'}`);
       console.log(`⏱️ Total processing time: ${(processingTime / 1000 / 60).toFixed(1)} minutes`);
-      console.log(`📂 Final video path: ${permanentVideoPath}`);
+      console.log(`🔗 Video URL: ${finalAnimationRecord.videoUrl}`);
 
       console.log("Cleaning Up Temp Files")
       await this.cleanupTempFiles()
       
       return {
         success: true,
-        animationId: animationRecord._id,
-        videoPath: permanentVideoPath,
-        videoUrl: permanentVideoPath,
+        animationId: finalAnimationRecord._id,
+        videoPath: finalAnimationRecord.videoUrl,
+        videoUrl: finalAnimationRecord.videoUrl,
         title: storyData.title,
         processingTime: processingTime,
         sceneCount: storyData.scenes.length,
@@ -2246,20 +2655,28 @@ class AnimationService {
           intensity: s.moodIntensity,
           emotionalTone: s.emotionalTone
         })),
-        moodEnhanced: true
+        moodEnhanced: true,
+        tokenUsage: tokenSummary,
+        storage: {
+          type: uploadInfo?.isLocal ? 'local' : 'gcs',
+          isPublic: !uploadInfo?.isLocal,
+          url: finalAnimationRecord.videoUrl
+        }
       };
 
     } catch (error) {
       console.error('❌ Mood-enhanced animation generation failed:', error);
       
-      // Cleanup on error (but preserve permanent video if it exists)
+      // Log token usage even on failure
+      const tokenSummary = this.getTokenUsageSummary();
+      console.log('\n📊 Token usage summary (despite failure):');
+      console.log(`   Total Tokens Used: ${tokenSummary.totalTokens.toLocaleString()}`);
+      console.log(`   Estimated Cost: $${tokenSummary.estimatedCost.toFixed(4)}`);
+      
+      // Cleanup on error
       if (finalVideoPath) {
         try {
-          // Only delete the temp video if it exists and is different from permanent location
-          const outputDir = path.join(process.cwd(), 'public', 'animations');
-          if (!finalVideoPath.startsWith(outputDir)) {
-            await fs.unlink(finalVideoPath);
-          }
+          await fs.unlink(finalVideoPath);
         } catch (cleanupError) {
           console.error('Error cleaning up video file:', cleanupError);
         }
